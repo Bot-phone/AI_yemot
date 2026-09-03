@@ -1,0 +1,56 @@
+name: Deploy Script (Apps Script)
+
+# פורס את gas/ai_yemot.gs לפרויקט ה-Apps Script בכל שינוי בו, ומעדכן את
+# ה-deployment הקיים — כלומר אותה כתובת /exec, בלי "New version" ידני.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'gas/**'
+      - '.github/workflows/deploy-gas.yml'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'עקיפת שער בטיחות (דריסה ללא חתימה מקדימה)'
+        required: false
+        default: false
+        type: boolean
+
+# שתי ריצות במקביל היו דוחפות שתי גרסאות לאותו פרויקט
+concurrency:
+  group: apps-script-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # שגיאת-תחביר מגיעה כאן ישר ל-/exec החי: הפריסה אוטומטית בכל דחיפה.
+      # node --check עוצר אותה לפני clasp push.
+      - name: בדיקת תחביר
+        # node דוחה סיומת .gs (ERR_UNKNOWN_FILE_EXTENSION) — מעתיקים ל-.js.
+        run: cp gas/ai_yemot.gs /tmp/gas_check.js && node --check /tmp/gas_check.js
+
+      - name: Push and deploy
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          GAS_SCRIPT_ID: ${{ secrets.GAS_SCRIPT_ID }}
+          GAS_DEPLOYMENT_ID: ${{ secrets.GAS_DEPLOYMENT_ID }}
+          ALLOW_UNSAFE_OVERWRITE: ${{ inputs.force || 'false' }}
+        run: bash gas/deploy_gas.sh
+
+      # המצב המרוחק שהיה לפני הדריסה — גיבוי למקרה חירום
+      - name: Backup of remote state
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gas-remote-backup
+          path: remote_backup
+          retention-days: 30
+          if-no-files-found: ignore
