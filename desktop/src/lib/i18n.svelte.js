@@ -63,6 +63,16 @@ export const LOCALES = {
       script_url_label: "כתובת סקריפט מותאמת (GAS)",
       preview_mode: "תצוגה מקדימה ואישור פעולות (מומלץ)",
       logout_on_finish: "התנתק מהמערכת בסיום (Logout)",
+      provider_custom: "ספק מותאם אישית (תואם OpenAI)",
+      custom_url_label: "כתובת API מותאמת אישית (מלאה)",
+      custom_url_placeholder: "לדוגמה: https://api.example.com/v1/chat/completions",
+      custom_url_hint:
+        "נתמך כל ספק עם API תואם OpenAI (OpenRouter, DeepSeek, Ollama וכדומה). ניתן להזין כתובת בסיס או כתובת מלאה — ההשלמה של /chat/completions תתבצע אוטומטית",
+      custom_url_required: "נא להזין כתובת API מותאמת אישית המתחילה ב-http:// או https://",
+      model_from_list: "בחירה מהרשימה",
+      model_manual: "הזנה ידנית",
+      model_manual_placeholder: "הזן מזהה מודל, לדוגמה: gpt-4o-mini",
+      model_manual_required: "נא להזין שם מודל",
 
       prompt_label: "הנחיות לעדכון שלוחה במערכת",
       prompt_hint: "תאר בעברית חופשית",
@@ -179,6 +189,16 @@ export const LOCALES = {
       script_url_label: "Custom script URL (GAS)",
       preview_mode: "Preview & approve actions (recommended)",
       logout_on_finish: "Log out from system when done (Logout)",
+      provider_custom: "Custom provider (OpenAI-compatible)",
+      custom_url_label: "Custom full API URL",
+      custom_url_placeholder: "e.g. https://api.example.com/v1/chat/completions",
+      custom_url_hint:
+        "Any OpenAI-compatible provider is supported (OpenRouter, DeepSeek, Ollama, etc.). Enter a base URL or the full endpoint — /chat/completions is appended automatically",
+      custom_url_required: "Please enter a custom API URL starting with http:// or https://",
+      model_from_list: "Choose from list",
+      model_manual: "Manual entry",
+      model_manual_placeholder: "Enter a model ID, e.g. gpt-4o-mini",
+      model_manual_required: "Please enter a model name",
 
       prompt_label: "Instructions for updating an extension",
       prompt_hint: "Describe freely in natural language",

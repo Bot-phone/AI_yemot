@@ -11,6 +11,8 @@ pub struct AIRequestPayload {
     pub is_preview: bool,    // Preview / FullAnswer
     pub logout: bool,        // Invalidate token after run
     pub script_url: String,  // Google Apps Script or Webhook URL
+    #[serde(default)]
+    pub base_url: String,    // Optional custom API URL (direct mode) — full endpoint or base URL
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -89,7 +91,8 @@ async fn send_to_script(payload: AIRequestPayload) -> Result<AIResponsePayload, 
 async fn send_to_direct_ai(payload: AIRequestPayload) -> Result<AIResponsePayload, String> {
     match payload.provider.to_lowercase().as_str() {
         "gemini" => send_to_gemini(payload).await,
-        "openai" | "groq" => send_to_openai_compatible(payload).await,
+        // "custom" = any OpenAI-compatible provider supplied by the user (base_url required)
+        "openai" | "groq" | "custom" => send_to_openai_compatible(payload).await,
         _ => Err(format!("ספק AI '{}' אינו נתמך עדיין באופן ישיר", payload.provider)),
     }
 }
@@ -101,9 +104,12 @@ async fn send_to_gemini(payload: AIRequestPayload) -> Result<AIResponsePayload, 
         return Err("נדרש מפתח API אישי לצורך פנייה ישירה לספק ה-AI".to_string());
     }
 
-    let model_name = match payload.model.to_lowercase().as_str() {
-        "pro" => "gemini-2.5-pro",
-        _ => "gemini-2.5-flash",
+    // "regular" / "pro" map to the recommended models; anything else is treated
+    // as an explicit model ID entered manually by the user.
+    let model_name = match payload.model.trim().to_lowercase().as_str() {
+        "pro" => "gemini-2.5-pro".to_string(),
+        "regular" | "" => "gemini-2.5-flash".to_string(),
+        _ => payload.model.trim().to_string(),
     };
 
     let client = reqwest::Client::builder()
@@ -111,10 +117,26 @@ async fn send_to_gemini(payload: AIRequestPayload) -> Result<AIResponsePayload, 
         .build()
         .map_err(|e| format!("שגיאה: {}", e))?;
 
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-        model_name, effective_key
-    );
+    // Custom URL support: either a full ".../models/X:generateContent" endpoint
+    // or a base URL (e.g. proxy/gateway root up to /v1beta) that we complete.
+    let custom_url = payload.base_url.trim().trim_end_matches('/').to_string();
+    let url = if custom_url.is_empty() {
+        format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+            model_name, effective_key
+        )
+    } else if custom_url.ends_with(":generateContent") {
+        if custom_url.contains("key=") {
+            custom_url
+        } else {
+            format!("{}?key={}", custom_url, effective_key)
+        }
+    } else {
+        format!(
+            "{}/models/{}:generateContent?key={}",
+            custom_url, model_name, effective_key
+        )
+    };
 
     let system_prompt = "אתה עוזר AI מקצועי להגדרת שלוחות במערכת ימות המשיח. \
     ענה בעברית ברורה ומדויקת. אם המשתמש ביקש הגדרות שלוחה, פרט את שמות הפרמטרים וערכיהם בקובץ ext.ini.";
@@ -166,9 +188,30 @@ async fn send_to_openai_compatible(payload: AIRequestPayload) -> Result<AIRespon
         return Err("נדרש מפתח API עבור ספק זה".to_string());
     }
 
-    let (base_url, model_name) = match payload.provider.to_lowercase().as_str() {
+    let (default_url, default_model) = match payload.provider.to_lowercase().as_str() {
         "groq" => ("https://api.groq.com/openai/v1/chat/completions", "llama-3.3-70b-versatile"),
         _ => ("https://api.openai.com/v1/chat/completions", "gpt-4o"),
+    };
+
+    // Custom provider (or custom URL on a known provider): the user supplies a
+    // full endpoint URL, or a base URL that we complete with /chat/completions.
+    let custom_url = payload.base_url.trim().trim_end_matches('/').to_string();
+    if custom_url.is_empty() && payload.provider.eq_ignore_ascii_case("custom") {
+        return Err("נדרשת כתובת API מותאמת אישית עבור ספק מותאם".to_string());
+    }
+    let base_url = if custom_url.is_empty() {
+        default_url.to_string()
+    } else if custom_url.ends_with("/chat/completions") {
+        custom_url
+    } else {
+        format!("{}/chat/completions", custom_url)
+    };
+
+    // "regular" / "pro" map to the recommended model; anything else is treated
+    // as an explicit model ID entered manually by the user (or chosen from the list).
+    let model_name = match payload.model.trim().to_lowercase().as_str() {
+        "regular" | "pro" | "" => default_model.to_string(),
+        _ => payload.model.trim().to_string(),
     };
 
     let client = reqwest::Client::builder()
@@ -191,7 +234,7 @@ async fn send_to_openai_compatible(payload: AIRequestPayload) -> Result<AIRespon
     });
 
     let res = client
-        .post(base_url)
+        .post(&base_url)
         .header("Authorization", format!("Bearer {}", payload.api_key))
         .header("Content-Type", "application/json")
         .json(&body)
@@ -211,9 +254,19 @@ async fn send_to_openai_compatible(payload: AIRequestPayload) -> Result<AIRespon
             .unwrap_or("לא התקבלה תשובה")
             .to_string();
 
+        // For a custom provider, show the server host instead of "custom".
+        let provider_display = if payload.provider.eq_ignore_ascii_case("custom") {
+            reqwest::Url::parse(&base_url)
+                .ok()
+                .and_then(|u| u.host_str().map(|h| h.to_string()))
+                .unwrap_or_else(|| "ספק מותאם".to_string())
+        } else {
+            payload.provider.clone()
+        };
+
         Ok(AIResponsePayload {
             success: true,
-            message: format!("תשובה התקבלה מ-{}", payload.provider),
+            message: format!("תשובה התקבלה מ-{}", provider_display),
             raw_response: answer,
             is_preview: payload.is_preview,
         })

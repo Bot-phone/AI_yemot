@@ -14,9 +14,14 @@
   let rtl = $derived(isRTL());
 
   // State (Svelte 5 Runes)
-  let targetMode = $state("script"); // "script" | "direct"
-  let aiProvider = $state("gemini"); // "gemini" | "openai" | "groq"
-  let modelType = $state("regular"); // "regular" | "pro"
+  let targetMode = $state("direct"); // "direct" | "script" — default: direct (persisted locally)
+  let aiProvider = $state("gemini"); // "gemini" | "openai" | "groq" | "custom"
+  let modelType = $state("regular"); // "regular" | "pro" (script mode)
+  // Direct mode model selection: from a known list, or manually entered ID
+  let modelSource = $state("list"); // "list" | "manual"
+  let selectedModel = $state("gemini-2.5-flash"); // model ID chosen from the list
+  let customModel = $state(""); // model ID entered manually
+  let customBaseUrl = $state(""); // custom full API URL (custom provider)
   let promptText = $state("");
   let yemotToken = $state("");
   let showToken = $state(false);
@@ -25,6 +30,36 @@
   let isPreviewMode = $state(true);
   let logoutOnFinish = $state(false);
   let scriptUrl = $state("https://script.google.com/macros/s/AKfycbz_REPLACE_ME/exec");
+
+  // Known model list per direct provider (first two are the classic Regular/Pro).
+  // tag = optional i18n key appended to the label.
+  /** @type {Record<string, {id: string, tag?: string}[]>} */
+  const PROVIDER_MODELS = {
+    gemini: [
+      { id: "gemini-2.5-flash", tag: "model_regular" },
+      { id: "gemini-2.5-pro", tag: "model_pro" },
+      { id: "gemini-2.0-flash" },
+      { id: "gemini-2.5-flash-lite" },
+      { id: "gemini-1.5-flash" },
+      { id: "gemini-1.5-pro" },
+    ],
+    openai: [
+      { id: "gpt-4o-mini", tag: "model_regular" },
+      { id: "gpt-4o", tag: "model_pro" },
+      { id: "gpt-4.1" },
+      { id: "gpt-4.1-mini" },
+      { id: "gpt-4.1-nano" },
+      { id: "o4-mini" },
+    ],
+    groq: [
+      { id: "llama-3.3-70b-versatile", tag: "model_regular" },
+      { id: "llama-3.1-8b-instant" },
+      { id: "openai/gpt-oss-120b", tag: "model_pro" },
+      { id: "openai/gpt-oss-20b" },
+      { id: "qwen/qwen3-32b" },
+      { id: "gemma2-9b-it" },
+    ],
+  };
 
   // Status & Progress
   let isLoading = $state(false);
@@ -105,6 +140,32 @@
 
       const savedScriptUrl = localStorage.getItem("ai_yemot_script_url");
       if (savedScriptUrl) scriptUrl = savedScriptUrl;
+
+      const savedTargetMode = localStorage.getItem("ai_yemot_target_mode");
+      if (savedTargetMode === "script" || savedTargetMode === "direct") {
+        targetMode = savedTargetMode;
+      }
+
+      const savedProvider = localStorage.getItem("ai_yemot_provider");
+      if (savedProvider && ["gemini", "openai", "groq", "custom"].includes(savedProvider)) {
+        aiProvider = savedProvider;
+      }
+
+      const savedModelSource = localStorage.getItem("ai_yemot_model_source");
+      if (savedModelSource === "list" || savedModelSource === "manual") {
+        modelSource = savedModelSource;
+      }
+
+      const savedSelectedModel = localStorage.getItem("ai_yemot_selected_model");
+      if (savedSelectedModel) selectedModel = savedSelectedModel;
+
+      const savedCustomModel = localStorage.getItem("ai_yemot_custom_model");
+      if (savedCustomModel) customModel = savedCustomModel;
+
+      const savedCustomBaseUrl = localStorage.getItem("ai_yemot_custom_base_url");
+      if (savedCustomBaseUrl) customBaseUrl = savedCustomBaseUrl;
+
+      normalizeModelSelection();
     } catch (_) {}
 
     // Load embedded knowledge files count
@@ -130,7 +191,53 @@
       localStorage.setItem("ai_yemot_token", yemotToken);
       localStorage.setItem("ai_yemot_api_key", apiKey);
       localStorage.setItem("ai_yemot_script_url", scriptUrl);
+      localStorage.setItem("ai_yemot_target_mode", targetMode);
+      localStorage.setItem("ai_yemot_provider", aiProvider);
+      localStorage.setItem("ai_yemot_model_source", modelSource);
+      localStorage.setItem("ai_yemot_selected_model", selectedModel);
+      localStorage.setItem("ai_yemot_custom_model", customModel);
+      localStorage.setItem("ai_yemot_custom_base_url", customBaseUrl);
     } catch (_) {}
+  }
+
+  // ----- Direct-mode provider / model helpers -----
+
+  // Switch processing mode and persist the choice immediately.
+  /**
+   * @param {"direct" | "script"} mode
+   */
+  function setTargetMode(mode) {
+    targetMode = mode;
+    try {
+      localStorage.setItem("ai_yemot_target_mode", mode);
+    } catch (_) {}
+  }
+
+  /**
+   * Known models for a provider (empty for a custom provider).
+   * @param {string} provider
+   * @returns {{id: string, tag?: string}[]}
+   */
+  function getProviderModels(provider) {
+    return PROVIDER_MODELS[provider] || [];
+  }
+
+  // Keep the selected model consistent with the current provider.
+  function normalizeModelSelection() {
+    if (aiProvider === "custom") {
+      // A custom provider has no known list — manual entry only.
+      modelSource = "manual";
+      return;
+    }
+    const models = getProviderModels(aiProvider);
+    if (models.length === 0) return;
+    if (!models.some((m) => m.id === selectedModel)) {
+      selectedModel = models[0].id;
+    }
+  }
+
+  function handleProviderChange() {
+    normalizeModelSelection();
   }
 
   async function checkToken() {
@@ -216,6 +323,27 @@
       return;
     }
 
+    // Direct-mode: validate the custom provider URL and the chosen model.
+    let payloadModel = modelType;
+    if (targetMode === "direct") {
+      if (aiProvider === "custom") {
+        const url = customBaseUrl.trim();
+        if (!url || !/^https?:\/\//i.test(url)) {
+          errorMessage = t("custom_url_required");
+          return;
+        }
+      }
+      if (aiProvider === "custom" || modelSource === "manual") {
+        if (!customModel.trim()) {
+          errorMessage = t("model_manual_required");
+          return;
+        }
+        payloadModel = customModel.trim();
+      } else {
+        payloadModel = selectedModel;
+      }
+    }
+
     saveSettings();
     errorMessage = "";
     resultOutput = "";
@@ -227,13 +355,14 @@
       const payload = {
         target_mode: targetMode,
         provider: aiProvider,
-        model: modelType,
+        model: payloadModel,
         prompt: promptText.trim(),
         token: yemotToken.trim(),
         api_key: apiKey.trim(),
         is_preview: isPreviewMode,
         logout: logoutOnFinish,
-        script_url: scriptUrl.trim()
+        script_url: scriptUrl.trim(),
+        base_url: targetMode === "direct" ? customBaseUrl.trim() : ""
       };
 
       const res = await invoke("send_ai_request", { payload });
@@ -714,17 +843,17 @@
             <div class="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl">
               <button
                 type="button"
-                onclick={() => targetMode = 'script'}
-                class="py-1.5 px-3 text-xs font-medium rounded-lg transition {targetMode === 'script' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-600 hover:text-slate-900'}"
-              >
-                {t("mode_script")}
-              </button>
-              <button
-                type="button"
-                onclick={() => targetMode = 'direct'}
+                onclick={() => setTargetMode('direct')}
                 class="py-1.5 px-3 text-xs font-medium rounded-lg transition {targetMode === 'direct' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-600 hover:text-slate-900'}"
               >
                 {t("mode_direct")}
+              </button>
+              <button
+                type="button"
+                onclick={() => setTargetMode('script')}
+                class="py-1.5 px-3 text-xs font-medium rounded-lg transition {targetMode === 'script' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-600 hover:text-slate-900'}"
+              >
+                {t("mode_script")}
               </button>
             </div>
           </div>
@@ -735,29 +864,90 @@
               <label class="block text-xs font-semibold text-slate-600 mb-1.5">{t("provider_label")}</label>
               <select
                 bind:value={aiProvider}
+                onchange={handleProviderChange}
                 class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white"
               >
                 <option value="gemini">{t("provider_gemini")}</option>
                 <option value="openai">{t("provider_openai")}</option>
                 <option value="groq">{t("provider_groq")}</option>
+                <option value="custom">{t("provider_custom")}</option>
               </select>
             </div>
-          {/if}
 
-          <!-- Model Type (Regular / Pro) -->
-          <div>
-            <label class="block text-xs font-semibold text-slate-600 mb-1.5">{t("model_label")}</label>
-            <div class="space-y-1.5">
-              <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                <input type="radio" bind:group={modelType} value="regular" class="text-blue-600 focus:ring-blue-500">
-                <span>{t("model_regular")}</span>
-              </label>
-              <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                <input type="radio" bind:group={modelType} value="pro" class="text-blue-600 focus:ring-blue-500">
-                <span>{t("model_pro")}</span>
-              </label>
+            {#if aiProvider === 'custom'}
+              <!-- Custom provider: full API URL -->
+              <div>
+                <label for="custom-api-url" class="block text-xs font-semibold text-slate-600 mb-1.5">{t("custom_url_label")}</label>
+                <input
+                  id="custom-api-url"
+                  type="text"
+                  dir="ltr"
+                  bind:value={customBaseUrl}
+                  placeholder={t("custom_url_placeholder")}
+                  class="w-full text-[11px] rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none text-slate-600"
+                />
+                <p class="text-[10px] text-slate-400 mt-1.5 leading-relaxed">{t("custom_url_hint")}</p>
+              </div>
+            {/if}
+
+            <!-- Model: pick from the known list or enter a manual ID -->
+            <div>
+              <label for="model-select" class="block text-xs font-semibold text-slate-600 mb-1.5">{t("model_label")}</label>
+              <div class="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl mb-2">
+                <button
+                  type="button"
+                  onclick={() => modelSource = 'list'}
+                  disabled={aiProvider === 'custom'}
+                  class="py-1.5 px-3 text-xs font-medium rounded-lg transition disabled:opacity-40 {modelSource === 'list' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-600 hover:text-slate-900'}"
+                >
+                  {t("model_from_list")}
+                </button>
+                <button
+                  type="button"
+                  onclick={() => modelSource = 'manual'}
+                  class="py-1.5 px-3 text-xs font-medium rounded-lg transition {modelSource === 'manual' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-600 hover:text-slate-900'}"
+                >
+                  {t("model_manual")}
+                </button>
+              </div>
+
+              {#if aiProvider !== 'custom' && modelSource === 'list'}
+                <select
+                  id="model-select"
+                  bind:value={selectedModel}
+                  class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white"
+                >
+                  {#each getProviderModels(aiProvider) as m}
+                    <option value={m.id}>{m.id}{m.tag ? ` — ${t(m.tag)}` : ""}</option>
+                  {/each}
+                </select>
+              {:else}
+                <input
+                  id="model-select"
+                  type="text"
+                  dir="ltr"
+                  bind:value={customModel}
+                  placeholder={t("model_manual_placeholder")}
+                  class="w-full text-[11px] rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none text-slate-600"
+                />
+              {/if}
             </div>
-          </div>
+          {:else}
+            <!-- Model Type (Regular / Pro) — script mode -->
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1.5">{t("model_label")}</label>
+              <div class="space-y-1.5">
+                <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                  <input type="radio" bind:group={modelType} value="regular" class="text-blue-600 focus:ring-blue-500">
+                  <span>{t("model_regular")}</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                  <input type="radio" bind:group={modelType} value="pro" class="text-blue-600 focus:ring-blue-500">
+                  <span>{t("model_pro")}</span>
+                </label>
+              </div>
+            </div>
+          {/if}
 
           <!-- Yemot Token -->
           <div>
