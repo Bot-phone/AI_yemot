@@ -1,0 +1,403 @@
+רשימת כל סוגי השלוחות (100) הקיימים היום
+
+* menu = תפריט
+
+type=menu
+
+* playfile = השמעת קבצים
+
+type=playfile
+
+* confbridge = חדר ועידה או שידור חי
+
+type=confbridge
+
+* admin_login = כניסה לניהול
+
+type=admin_login
+
+* record = הקלטות
+
+type=record
+
+* routing = ניתוב השיחה למספרי טלפון ישראליים
+
+type=routing
+
+* routing_time = ניתוב שיחה לפי שעות
+
+type=routing_time
+
+* routing_yemot = הפניה למערכת תכנים אחרת בימות המשיח
+
+type=routing_yemot
+
+* points_say_total = השמעת הניקוד שנצבר
+
+type=points_say_total
+
+* last_play = חזרה להשמעה אחרונה
+
+type=last_play
+
+* voicemail_email= תא קולי המוגבל למאה הודעות (לא פעיל כרגע)
+
+type=voicemail_email
+
+* template_add_number = הוספת מספר לרשימת תפוצה
+
+type=template_add_number
+
+* template_remove_number = הסרת מספר מרשימת תפוצה
+
+type=template_remove_number
+
+* menu_star = תפריט מקש כוכבית
+
+type=menu_star
+
+* message_options_menu = הוראות הפעלה
+
+type=message_options_menu
+
+* oref_alerts = התראות צבע אדום
+
+type=oref_alerts
+
+* oref_alerts_quiet_wave = הגל השקט לאזעקות
+
+type=oref_alerts_quiet_wave
+
+* zmanim = מערכת זמני היום
+
+type=zmanim
+
+* exchange_rates = שערי מטח
+
+type=exchange_rates
+
+* play_and_return = השמעת הודעה אחת בלבד
+
+type=play_and_return
+
+* voicemail_email = תא קולי השולח העתק לדואר האלקטרוני
+
+type=voicemail_email
+
+* conference_amount = חדר וועידה המוגבל לכמות משתמשים
+
+type=conference_amount
+
+* toplay_time = השמעת הודעת לפי תאריך עברי, לועזי, ספירת העומר, חנוכה, כולל הגבלת הפעמים להשמעת הודעה למאזין
+
+type=toplay_time
+
+* chapter_receive = חלוקת פרקי תהילים, גמרא, פרשות, דפים ועמודים
+
+type=chapter_receive
+
+* trivia_questions = שאלות טרוויה ונכון או לא נכון
+
+type=trivia_questions
+
+* open_wap_reseller_customer = פתיחת וצאפפון ובלוג פון
+
+type=open_wap_reseller_customer
+
+* say_hour_and_minute=השמעת השעה כעת
+
+type=say_hour_and_minute
+
+* approval_number=חלוקת מספרי אישורים
+
+type=approval_number
+
+* recording_and_entering_data=קבלת נתונים
+
+type=recording_and_entering_data
+
+* phone_play_list=רשימות השמעה אישיות
+
+type=phone_play_list
+
+* create_ivr2=פתיחת מערכת תכנים חדשה
+
+type=create_ivr2
+
+* routing_1800=הפניית השיחה למספרי 1800 ו 1801
+
+type=routing_1800
+
+* menu_voice=תפריט עם זיהוי דיבור קולי
+
+type=menu_voice
+
+* sending_sms=שליחת sms
+
+type=sending_sms
+
+* go_to_folder_time=שלוחת העברה לתיקיות אחרות לפי שעות או ימים
+
+type=go_to_folder_time
+
+* stt_dir_all_file=שלוחת המרת קבצי קול לטקסט
+
+type=stt_dir_all_file
+
+* points_save=שלוחת הוספת ניקוד
+
+type=points_save
+
+* hangup=שלוחת ניתוק השיחה
+
+type=hangup
+
+* start_select_file=שלוחה המאפשרת למאזין לבחור האם בשלוחת השמעת קבצים יהיה לו תפריט בחירת קובץ או לא
+
+type=start_select_file
+
+* playdir_time=שידור חי מדומה, מרובה קבצים, השמעת כל הקבצים בשלוחה בהתאם לזמן המוגדר
+
+type=playdir_time
+
+* private_did_customer=קבלת או שליחת מספר אישי
+
+type=private_did_customer
+
+* tzintuk=הפעלת צינתוק, ושלוחה להרשמה או הוספה מרשימת הצינתוקים
+
+type=tzintuk
+
+* go_to_folder_from_list_all_information=פילטר לפי רשימות, העברה לשלוחה אחרת לפי הגדרות ספציפיות ללקוח לפי קובץ
+
+type=go_to_folder_from_list_all_information
+
+* nedarim_plus=סליקת אשראי דרך נדרים פלוס
+
+type=nedarim_plus
+
+* pelecard=סליקת אשראי דרך פלאקארד
+
+type=pelecard
+
+* cardcom=סליקת אשראי דרך קרדקום
+
+type=cardcom
+
+* sale_seats=מערכת מכירת מושבים
+
+type=sale_seats
+
+* chapter_receive_mishnayot_select=מערכת חלוקת משניות, כולל שמיעת המשניות משלוש רבנים, ודוחות לימוד
+
+type=chapter_receive_mishnayot_select
+
+* study_tracking=מעקב לימודים
+
+type=study_tracking
+
+* go_to_folder_count=מעבר לשלוחות שונות, כשיש פחות או יותר מכמות, כל שהיא, של מאזינים שעברו במודול הזה
+
+type=go_to_folder_count
+
+* go_to_folder=מעבר לשלוחה אחרת
+
+type=go_to_folder
+
+* music_on_hold=מוזיקה בהמתנה ושידורים חיים מערוצים שונים
+
+type=music_on_hold
+
+* queue=מודל תור
+
+type=queue
+
+* send_fax=שליחת פקס
+
+type=send_fax
+
+* recv_fax=קבלת פקס
+
+type=recv_fax
+
+* examination=מודל מבחן
+
+type=examination
+
+* seker=שלוחת סקר
+
+type=seker
+
+* fundraising=מודול מעקב גיוס תרומות
+
+type=fundraising
+
+* members_active=מודול כמות חברים פעילים
+
+type=members_active
+
+* counter_calculator=מודל חישוב מונה
+
+type=counter_calculator
+
+* donation_campaign=מודל התרמות, מצינג
+
+type=donation_campaign
+
+* points_edit=מודול הוספת או הורדת נקודות ללקוח על ידי מנהלים
+
+type=points_edit
+
+* yemot_dialer_campaign_list=מודול הוספה, הסרה או חסימה מתבניות רשימות התפוצה
+
+type=yemot_dialer_campaign_list
+
+* tehillim_select_save_and_listen=מודול בחירת ושמירת פרק תהילים קבוע ללקוח
+
+type=tehillim_select_save_and_listen
+
+* points_to_other_id=הוספת ניקוד למשתמש אחר
+
+type=points_to_other_id
+
+* api=תקשור עם מחשבים וממשקי נתונים חיצוניים
+
+type=api
+
+* examination_american=מבחן אמריקאי
+
+type=examination_american
+
+* key_play_set_record_go_to_foldar=כניסה לפי מפתח, הגבלת כניסות, השמעת הודעה, תפריט, הקלטה, ומעבר לתיקיה אחרת
+
+type=key_play_set_record_go_to_foldar
+
+* block_id_type=חסימת משתמש
+
+type=block_id_type
+
+* coupon=חלוקת קופונים
+
+type=coupon
+
+* credit_card=התחברות למנוע סליקה כללי
+
+type=credit_card
+
+* id_message=השמעת נתונים והודעות אישיות
+
+type=id_message
+
+* id_list_message=השמעת הודעות ללקוח ברצף
+
+type=id_list_message
+
+* record_system_messages=הקלטת הודעות מערכת בשלוחה
+
+type=record_system_messages
+
+* folder_play_random=הפעלת שלוחה רנדומלית
+
+type=folder_play_random
+
+* playfile_time=הפעלת קובץ בשעה מתוזמנת, שידור חי מדומה
+
+type=playfile_time
+
+* yemot_dialer_campaign_start=הפעלה מהירה לקמפיין
+
+type=yemot_dialer_campaign_start
+
+* template_filter=הפניית משתמשים לשלוחות שונות לפי רשימת התפוצה
+
+type=template_filter
+
+* sale_products=הזמנת מוצרים לפי מספר קטלוגי
+
+type=sale_products
+
+* daily_message=הודעה יומית מתחלפת ומעבר לשלוחה אחרת
+
+type=daily_message
+
+* go_to_folder_date=ההעברה לשלוחה אחרת, לפי תאריך עברי או לועזי או ו לפי שעה או דקה
+
+type=go_to_folder_date
+
+* tasks_report=דיווח משימות יומי
+
+type=tasks_report
+
+* checking_units=בדיקת יתרת יחידות נמוכה או פג תוקף מתקרב
+
+type=checking_units
+
+* time_keeper=שעון נוכחות
+
+type=time_keeper
+
+* routing_ip=ניתוב שיחה למחשב חיצוני
+
+type=routing_ip
+
+* points_and_rating=מודול נקודות ללקוח על קניה, ודירוג בעל העסק
+
+type=points_and_rating
+
+* limit_call_seconds=הגבלת אורך השיחה, טיימר
+
+type=limit_call_seconds
+
+* calculator_add_percentage=מחשבון אחוזי תוספת
+
+type=calculator_add_percentage
+
+* access_filter=פילטר כניסה לפי תאריך עם אפשרויות שונות ואפשרות הגבלת כמות הכניסות
+
+type=access_filter
+
+* number_now_is=המספר כעת הוא
+
+type=number_now_is
+
+* say_amount_subscribers=השמעת כמות נרשמים מתוך שלוחת קבלת נתונים
+
+type=say_amount_subscribers
+
+* amount_incoming_phone_numbers=ספירת כמות מספרי טלפון שונים שנכנסו לשלוחה
+
+type=amount_incoming_phone_numbers
+
+* nitoviya=קבלת או שליחת ניתוביה
+
+type=nitoviya
+
+* nitoviya_b_say_number=שמיעת מספר ניתוביה
+
+type=nitoviya_b_say_number
+
+* donation_campaign_some_actions=שלוחת מצינג עם הגדרות נוספות
+
+type=donation_campaign_some_actions
+
+* private_did=הוצאת וקבלת שיחות
+
+type=private_did
+
+* add_id_to_list = הוספת ערך ID של המתקשר או ערך מוגדר מראש לקובץ במערכת לבחירתכם
+
+type=add_id_to_list
+
+* remove_id_from_list = הסרת ערך ID של המתקשר או ערך מוגדר מראש מקובץ במערכת לבחירתכם
+
+type=remove_id_from_list
+
+* yemot_dialer = שלוחה לניהול קמפיין
+
+type=yemot_dialer
+
+* sending_sms_and_return = שליחת sms ללקוח בכניסה לשלוחה ומעבר לשלוחה אחרת
+
+type=sending_sms_and_return
+
+חזור למעלה
