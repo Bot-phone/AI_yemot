@@ -20,7 +20,6 @@ pub async fn check_for_updates() -> Result<UpdateCheckResult, String> {
         .map_err(|e| e.to_string())?;
 
     let repos = [
-        "https://api.github.com/repos/palmoni5/AI_yemot/releases/latest",
         "https://api.github.com/repos/Bot-phone/AI_yemot/releases/latest",
     ];
 
