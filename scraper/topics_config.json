@@ -173,8 +173,8 @@
   {
     "tid": 19256,
     "title": "מודול ניתוב שיחות לפי תור",
-    "action": "file",
-    "target_file": "מודול ניתוב שיחות לפי תור.txt",
+    "action": "append",
+    "target_file": "ניתובי שיחה למענה אנושי - כל הסוגים (ראוטינג-ראוטינג טיים-תור-ראוטינג טלגרם).txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -268,8 +268,8 @@
   {
     "tid": 6076,
     "title": "מודול תור (מענה אנושי)",
-    "action": "file",
-    "target_file": "מודול תור (מענה אנושי).txt",
+    "action": "append",
+    "target_file": "ניתובי שיחה למענה אנושי - כל הסוגים (ראוטינג-ראוטינג טיים-תור-ראוטינג טלגרם).txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -933,8 +933,8 @@
   {
     "tid": 60,
     "title": "שלוחת הוספת ניקוד points_save",
-    "action": "file",
-    "target_file": "שלוחת הוספת ניקוד points_save.txt",
+    "action": "append",
+    "target_file": "נקודות ללקוח על קניה-דירוג בעל העסק.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -1010,7 +1010,7 @@
     "tid": 57,
     "title": "limit_call_seconds - הגבלת אורך השיחה, \"טיימר\"",
     "action": "file",
-    "target_file": "limit_call_seconds - הגבלת אורך השיחה, -טיימר-.txt",
+    "target_file": "הגבלת אורך השיחה - טיימר.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -1200,7 +1200,7 @@
     "tid": 218,
     "title": "ניתובי שיחה למענה אנושי - כל הסוגים",
     "action": "file",
-    "target_file": "ניתובי שיחה למענה אנושי - כל הסוגים (ראוטינג-ראוטינג טיים-תור-ראוטינג טלגרם).txt",
+    "target_file": "ניתוביה.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -1218,8 +1218,8 @@
   {
     "tid": 7519,
     "title": "ראוטינג טלגרם - העברת שיחה למשתמש טלגרם",
-    "action": "file",
-    "target_file": "ראוטינג טלגרם - העברת שיחה למשתמש טלגרם.txt",
+    "action": "append",
+    "target_file": "ניתובי שיחה למענה אנושי - כל הסוגים (ראוטינג-ראוטינג טיים-תור-ראוטינג טלגרם).txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -1313,8 +1313,8 @@
   {
     "tid": 32,
     "title": "access_filter פילטר כניסה לשלוחות לפי תאריך עברי / לועזי / ספירת העומר / חנוכה - הגבלת הפעמים לכניסה לשלוחה לכל מאזין",
-    "action": "file",
-    "target_file": "access_filter פילטר כניסה לשלוחות לפי תאריך עברי - לועזי - ספירת העומר - חנוכה - הגבלת הפעמים לכניסה לשלוחה לכל מאזין.txt",
+    "action": "append",
+    "target_file": "השמעת הודעת לפי תאריך עברי - לועזי - ספירת העומר - חנוכה.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -1427,8 +1427,8 @@
   {
     "tid": 5721,
     "title": "פילטר כניסה לשלוחה לפי כמות נקודות - הטמעה בכל מודול",
-    "action": "file",
-    "target_file": "פילטר כניסה לשלוחה לפי כמות נקודות - הטמעה בכל מודול.txt",
+    "action": "append",
+    "target_file": "נקודות ללקוח על קניה-דירוג בעל העסק.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -1522,8 +1522,8 @@
   {
     "tid": 4005,
     "title": "playfile_and_enter_digits_time - קליקרים  + שידור חי רציף מדומה מרובה קבצים",
-    "action": "file",
-    "target_file": "playfile_and_enter_digits_time - קליקרים + שידור חי רציף מדומה מרובה קבצים.txt",
+    "action": "append",
+    "target_file": "קליקרים - שידור חי רציף מדומה.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -1542,7 +1542,7 @@
     "tid": 38,
     "title": "מעבר לשלוחה אחרת - go_to_folder",
     "action": "file",
-    "target_file": "מעבר לשלוחה אחרת - go_to_folder.txt",
+    "target_file": "מעבר לשלוחה אחרת - כמה אפשרויות.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -1656,7 +1656,7 @@
     "tid": 47,
     "title": "חלוקת פרקי תהילים / גמרא /פרשות/דפים/עמודים - chapter_receive",
     "action": "file",
-    "target_file": "חלוקת פרקי תהילים - גמרא -פרשות-דפים-עמודים - chapter_receive.txt",
+    "target_file": "חלוקת פרקי תהילים - גמרא -פרשות-דפים-עמודים.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -1674,8 +1674,8 @@
   {
     "tid": 2797,
     "title": "חיבור IAX למערכת - אפשרות לבצע חיוג ולקבל שיחות מהמחשב למערכת שלכם",
-    "action": "file",
-    "target_file": "חיבור IAX למערכת - אפשרות לבצע חיוג ולקבל שיחות מהמחשב למערכת שלכם.txt",
+    "action": "append",
+    "target_file": "מודול sip - הגדרות לחיוג מטלפון משרדי או משלוחת sip.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -1731,8 +1731,8 @@
   {
     "tid": 2678,
     "title": "מודול הסרת ערך ID של המתקשר או ערך מוגדר מראש מקובץ במערכת לבחירתכם",
-    "action": "file",
-    "target_file": "מודול הסרת ערך ID של המתקשר או ערך מוגדר מראש מקובץ במערכת לבחירתכם.txt",
+    "action": "append",
+    "target_file": "שלוחת הוספת הסרת ושינוי ערכים וערך ID מקבצי הגדרות במערכת.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -1750,8 +1750,8 @@
   {
     "tid": 2616,
     "title": "מודול שליחת sms ללקוח בכניסה לשלוחה ומעבר לשלוחה אחרת",
-    "action": "file",
-    "target_file": "מודול שליחת sms ללקוח בכניסה לשלוחה ומעבר לשלוחה אחרת.txt",
+    "action": "append",
+    "target_file": "שליחת SMS למתקשר או לאחרים.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -1846,7 +1846,7 @@
     "tid": 364,
     "title": "המספר הנוסף כמודול - נסיוני - מספר אישי",
     "action": "file",
-    "target_file": "המספר הנוסף כמודול - נסיוני - מספר אישי.txt",
+    "target_file": "מספר נוסף במודול מספר אישי.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -1940,8 +1940,8 @@
   {
     "tid": 1049,
     "title": "שלוחת שינוי סיסמה לשלוחה במערכת",
-    "action": "file",
-    "target_file": "שלוחת שינוי סיסמה לשלוחה במערכת.txt",
+    "action": "append",
+    "target_file": "עריכת סיסמה אישית וסיסמת שלוחה מסויימת.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -1959,8 +1959,8 @@
   {
     "tid": 811,
     "title": "קמפיין הודעות אישיות בAPI - אפשרות שהלקוח יחזור למספר וישמע את ההודעה שלו",
-    "action": "file",
-    "target_file": "קמפיין הודעות אישיות בAPI - אפשרות שהלקוח יחזור למספר וישמע את ההודעה שלו.txt",
+    "action": "append",
+    "target_file": "שלוחה לניהול קמפיין.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -1979,7 +1979,7 @@
     "tid": 896,
     "title": "מודול שיחות שלא נענו - קבלת התראה במייל/סמס",
     "action": "file",
-    "target_file": "מודול שיחות שלא נענו - קבלת התראה במייל-סמס.txt",
+    "target_file": "מודול שיחות שלא נענו - קבלת התראה במייל וסמס.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -2036,7 +2036,7 @@
     "tid": 589,
     "title": "מודול הוספת ערך ID של המתקשר או ערך מוגדר מראש לקובץ במערכת לבחירתכם",
     "action": "file",
-    "target_file": "מודול הוספת ערך ID של המתקשר או ערך מוגדר מראש לקובץ במערכת לבחירתכם.txt",
+    "target_file": "שלוחת הוספת הסרת ושינוי ערכים וערך ID מקבצי הגדרות במערכת.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -2054,8 +2054,8 @@
   {
     "tid": 481,
     "title": "שליחת סמס ללקוח בכניסה לשלוחה כהטמעה בכל מודול",
-    "action": "file",
-    "target_file": "שליחת סמס ללקוח בכניסה לשלוחה כהטמעה בכל מודול.txt",
+    "action": "append",
+    "target_file": "שליחת SMS למתקשר או לאחרים.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -2207,7 +2207,7 @@
     "tid": 109,
     "title": "zmanim זמני היום והמרת תאריך עברי לועזי והפוך",
     "action": "file",
-    "target_file": "zmanim זמני היום והמרת תאריך עברי לועזי והפוך.txt",
+    "target_file": "זמני היום והמרת תאריך עברי לועזי והפוך - זמני שבת.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -2263,7 +2263,7 @@
   {
     "tid": 106,
     "title": "שליחת הודעת טקסט מהמערכת מהזיהוי של המתקשר",
-    "action": "append",
+    "action": "file",
     "target_file": "שליחת SMS למתקשר או לאחרים.txt",
     "post_filter": {
       "mode": "author_only",
@@ -2282,8 +2282,8 @@
   {
     "tid": 105,
     "title": "בדיקת יתרת יחידות נמוכה או פג תוקף מתקרב",
-    "action": "file",
-    "target_file": "בדיקת יתרת יחידות נמוכה או פג תוקף מתקרב.txt",
+    "action": "append",
+    "target_file": "בדיקת יתרת יחידות כהטמעה בכל מודול או בכניסה למערכת כולל שליחת שיחה למנהל הקו.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -2321,7 +2321,7 @@
     "tid": 102,
     "title": "מערכת חלוקת משניות, כולל שמיעת המשניות מ4 קריינים, ודוחות לימוד - chapter_receive_mishnayot_select",
     "action": "file",
-    "target_file": "מערכת חלוקת משניות, כולל שמיעת המשניות מ4 קריינים, ודוחות לימוד - chapter_receive_mishnayot_select.txt",
+    "target_file": "מערכת חלוקת משניות-כולל שמיעת המשניות מ4 קריינים-ודוחות לימוד.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -2378,7 +2378,7 @@
     "tid": 98,
     "title": "רשימת השלוחות שאפשר להגדיר גם ע\"י הטלפון",
     "action": "file",
-    "target_file": "רשימת השלוחות שאפשר להגדיר עי הטלפון.txt",
+    "target_file": "רשימת השלוחות שאפשר להגדיר ע י הטלפון.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -2434,7 +2434,7 @@
   {
     "tid": 92,
     "title": "מודול מבחן - examination",
-    "action": "file",
+    "action": "append",
     "target_file": "מבחן - מבחן אמריקאי.txt",
     "post_filter": {
       "mode": "author_only",
@@ -2454,7 +2454,7 @@
     "tid": 85,
     "title": "מבחן אמריקאי examination_american",
     "action": "file",
-    "target_file": "מבחן אמריקאי examination_american.txt",
+    "target_file": "מבחן - מבחן אמריקאי.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -2568,7 +2568,7 @@
     "tid": 74,
     "title": "השעה כעת - say_hour_and_minute",
     "action": "file",
-    "target_file": "השעה כעת - say_hour_and_minute.txt",
+    "target_file": "שלוחת השעה כעת.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -2605,8 +2605,8 @@
   {
     "tid": 72,
     "title": "זמני היום וזמני השבת",
-    "action": "file",
-    "target_file": "זמני היום וזמני השבת.txt",
+    "action": "append",
+    "target_file": "זמני היום והמרת תאריך עברי לועזי והפוך - זמני שבת.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -2758,7 +2758,7 @@
     "tid": 64,
     "title": "points_and_rating מודול נקודות ללקוח על קניה, ודירוג בעל העסק",
     "action": "file",
-    "target_file": "points_and_rating מודול נקודות ללקוח על קניה, ודירוג בעל העסק.txt",
+    "target_file": "נקודות ללקוח על קניה-דירוג בעל העסק.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -2776,8 +2776,8 @@
   {
     "tid": 61,
     "title": "מודול הוספת / הורדת נקודות ללקוח על ידי מנהלים points_edit",
-    "action": "file",
-    "target_file": "מודול הוספת - הורדת נקודות ללקוח על ידי מנהלים points_edit.txt",
+    "action": "append",
+    "target_file": "נקודות ללקוח על קניה-דירוג בעל העסק.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -2796,7 +2796,7 @@
     "tid": 59,
     "title": "מודול הוספה, הסרה או חסימה מתבניות רשימות התפוצה yemot_dialer_campaign_list",
     "action": "file",
-    "target_file": "מודול הוספה, הסרה או חסימה מתבניות רשימות התפוצה yemot_dialer_campaign_list.txt",
+    "target_file": "הוספה הסרה או חסימה מתבניות רשימות התפוצה.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -2815,7 +2815,7 @@
     "tid": 50,
     "title": "מערכת מכירת כסאות לבתי כנסת , אירועים וכד' sale_seats",
     "action": "file",
-    "target_file": "מערכת מכירת כסאות לבתי כנסת , אירועים וכד' sale_seats.txt",
+    "target_file": "מכירת כסאות לבתי כנסת אירועים וכדומה.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -2834,7 +2834,7 @@
     "tid": 49,
     "title": "מכירות | הזמנת מוצר לפי מק\"ט (מספר קטלוגי) sale_products",
     "action": "file",
-    "target_file": "מכירות - הזמנת מוצר לפי מק-ט (מספר קטלוגי) sale_products.txt",
+    "target_file": "מכירות - הזמנת מוצר לפי מקט.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -2852,8 +2852,8 @@
   {
     "tid": 48,
     "title": "מודול בחירת ושמירת פרק תהילים קבוע ללקוח tehillim_select_save_and_listen",
-    "action": "file",
-    "target_file": "מודול בחירת ושמירת פרק תהילים קבוע ללקוח tehillim_select_save_and_listen.txt",
+    "action": "append",
+    "target_file": "חלוקת פרקי תהילים - גמרא -פרשות-דפים-עמודים.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -2871,7 +2871,7 @@
   {
     "tid": 46,
     "title": "routing - ניתוב שלוחה (למערכת אחרת, למספר טלפון, לכמה מספרים ביחד, ל1800 לIP)",
-    "action": "append",
+    "action": "file",
     "target_file": "ניתובי שיחה למענה אנושי - כל הסוגים (ראוטינג-ראוטינג טיים-תור-ראוטינג טלגרם).txt",
     "post_filter": {
       "mode": "author_only",
@@ -2947,8 +2947,8 @@
   {
     "tid": 39,
     "title": "מעבר לשלוחות שונות - לפי כמות מאזינים",
-    "action": "file",
-    "target_file": "מעבר לשלוחות שונות - לפי כמות מאזינים.txt",
+    "action": "append",
+    "target_file": "מעבר לשלוחה אחרת - כמה אפשרויות.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -2966,8 +2966,8 @@
   {
     "tid": 37,
     "title": "ההעברה לשלוחה אחרת - לפי תאריך עברי / לועזי או/ו לפי שעה / דקה",
-    "action": "file",
-    "target_file": "ההעברה לשלוחה אחרת - לפי תאריך עברי - לועזי או-ו לפי שעה - דקה.txt",
+    "action": "append",
+    "target_file": "מעבר לשלוחה אחרת - כמה אפשרויות.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -3004,8 +3004,8 @@
   {
     "tid": 35,
     "title": "פילטר לפי רשימות: ההעברה לשלוחה אחרת לפי הגדרות ספציפיות ללקוח לפי קובץ",
-    "action": "file",
-    "target_file": "פילטר לפי רשימות- ההעברה לשלוחה אחרת לפי הגדרות ספציפיות ללקוח לפי קובץ.txt",
+    "action": "append",
+    "target_file": "מעבר לשלוחה אחרת - כמה אפשרויות.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -3024,7 +3024,7 @@
     "tid": 30,
     "title": "תא קולי השולח העתק לדוא\"ל - voicemail_email",
     "action": "file",
-    "target_file": "תא קולי השולח העתק לדוא-ל - voicemail_email.txt",
+    "target_file": "תא קולי השולח העתק לאימייל.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -3081,7 +3081,7 @@
     "tid": 14,
     "title": "השמעת הודעת לפי תאריך עברי / לועזי / ספירת העומר / חנוכה - כולל הגבלת הפעמים להשמעת הודעה למאזין - toplay_time",
     "action": "file",
-    "target_file": "השמעת הודעת לפי תאריך עברי - לועזי - ספירת העומר - חנוכה - כולל הגבלת הפעמים להשמעת הודעה למאזין - toplay_time.txt",
+    "target_file": "השמעת הודעת לפי תאריך עברי - לועזי - ספירת העומר - חנוכה.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
