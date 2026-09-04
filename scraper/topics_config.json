@@ -1,0 +1,3175 @@
+[
+  {
+    "tid": 8166,
+    "title": "קווי יסוד למרכזייה הטלפונית של ימות המשיח",
+    "action": "file",
+    "target_file": "קווי יסוד למרכזייה הטלפונית של ימות המשיח.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 2729,
+    "title": "אינדקס קישורים",
+    "action": "ignore",
+    "target_file": "",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": "אינדקס קישורים לפורום"
+  },
+  {
+    "tid": 8082,
+    "title": "הגדרות כלליות לניהול מערכת תכנים - IVR - המערכות הטלפוניות המתקדמות בעולם מבית ימות המשיח פתרונות תקשורות",
+    "action": "file",
+    "target_file": "הגדרות גלובליות-הגדרות לכל השלוחות-הגדרות בכניסה לשלוחות ולמערכת-והסברים כלליים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 8204,
+    "title": "הגדרות הזיהוי בכלל המערכת",
+    "action": "file",
+    "target_file": "הגדרות הזיהוי בכלל המערכת.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 8122,
+    "title": "הרשאות כניסה לשלוחה",
+    "action": "file",
+    "target_file": "הרשאות כניסה לשלוחה.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 3,
+    "title": "רשימת הודעות מערכת",
+    "action": "file",
+    "target_file": "רשימת הודעות מערכת.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 7010,
+    "title": "השמעת קבצים",
+    "action": "file",
+    "target_file": "השמעת קבצים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 6,
+    "title": "menu-שלוחת תפריט",
+    "action": "file",
+    "target_file": "תפריט.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 5041,
+    "title": "confbridge - חדר ועידה / שידור חי",
+    "action": "file",
+    "target_file": "confbridge - חדר ועידה - שידור חי.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 19256,
+    "title": "מודול ניתוב שיחות לפי תור",
+    "action": "file",
+    "target_file": "מודול ניתוב שיחות לפי תור.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 55,
+    "title": "API - גישת מפתחים למערכות",
+    "action": "file",
+    "target_file": "מודול API - תקשור עם מחשבים וממשקי נתונים חיצוניים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 19353,
+    "title": "מודול טלזכור - telezchor - שירות שליחת תזכורת לחיוג למספר מותאם אישית - לפי שעות ולפי ימים",
+    "action": "file",
+    "target_file": "מודול טלזכור - telezchor.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 19207,
+    "title": "הזדהות מאובטחת ומותאמת אישית בAPI - מפתח קבוע - API KEY",
+    "action": "append",
+    "target_file": "מודול API - תקשור עם מחשבים וממשקי נתונים חיצוניים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 19174,
+    "title": "[[topic:topic-is-deleted]]",
+    "action": "ignore",
+    "target_file": "",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": "נושא נמחק בפורום"
+  },
+  {
+    "tid": 6076,
+    "title": "מודול תור (מענה אנושי)",
+    "action": "file",
+    "target_file": "מודול תור (מענה אנושי).txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 18186,
+    "title": "שיתוף מערכת בין מאזינים",
+    "action": "file",
+    "target_file": "שיתוף מערכת בין מאזינים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 6190,
+    "title": "התחברות למנוע סליקה כללי - credit_card",
+    "action": "file",
+    "target_file": "התחברות למנוע סליקה כללי.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 16424,
+    "title": "פונקציה לפיצול דו\"חות לפי זמן (יום / שבוע / חודש / שנה)",
+    "action": "file",
+    "target_file": "פונקציה לפיצול דוחות לפי זמן.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 33,
+    "title": "שאלות טריוויה ונכון או לא נכון - trivia_questions",
+    "action": "file",
+    "target_file": "שאלות טריוויה ונכון או לא נכון.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 15175,
+    "title": "טוקארד",
+    "action": "file",
+    "target_file": "טוקארד.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 14500,
+    "title": "פילטר מעבר לשלוחה באם שידור חי אינטרנטי פעיל",
+    "action": "file",
+    "target_file": "פילטר מעבר לשלוחה באם שידור חי אינטרנטי פעיל.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 14268,
+    "title": "אחסון קבצים במערכת - מידע והגבלות",
+    "action": "file",
+    "target_file": "אחסון קבצים במערכת - מידע והגבלות.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 91,
+    "title": "צינתוקים והתראות במערכת תוכן (IVR) ללא עלות יחידות",
+    "action": "file",
+    "target_file": "צינתוקים חינמיים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 12759,
+    "title": "פתיחת שלוחות בהדרגה, לפי זמנים ולפי זיהוי אישי - להטמעה בכל שלוחה",
+    "action": "file",
+    "target_file": "פתיחת שלוחות בהדרגה-לפי זמנים ולפי זיהוי אישי - להטמעה בכל שלוחה.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 236,
+    "title": "האזנה אחרונה - last_play",
+    "action": "file",
+    "target_file": "האזנה אחרונה.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 12134,
+    "title": "מודול שינוי 'סיסמת ניהול' במערכת",
+    "action": "file",
+    "target_file": "שינוי סיסמת הקלטה - גישה - ניהול.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 11897,
+    "title": "עדכון דפי גמרא - תלמוד בבלי",
+    "action": "append",
+    "target_file": "חלוקת פרקי תהילים - גמרא -פרשות-דפים-עמודים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 11714,
+    "title": "מודול שינוי 'סיסמת גישה' במערכת",
+    "action": "append",
+    "target_file": "שינוי סיסמת הקלטה - גישה - ניהול.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 11713,
+    "title": "מודול שינוי 'סיסמת הקלטות' במערכת",
+    "action": "append",
+    "target_file": "שינוי סיסמת הקלטה - גישה - ניהול.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 4307,
+    "title": "פילטר לפי רשימות צינתוקים כמודול או כהטמעה בכל מודול",
+    "action": "file",
+    "target_file": "פילטר לפי רשימת צינתוקים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 11203,
+    "title": "תוסף Click To Call לדפדפן",
+    "action": "ignore",
+    "target_file": "",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": "תוסף כרום Click to Call בלבד"
+  },
+  {
+    "tid": 97,
+    "title": "מודול רשימות השמעה אישיות - playlist",
+    "action": "file",
+    "target_file": "רשימות השמעה אישיות.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 10822,
+    "title": "מודול השתקת קבלת חיוגים והתראות מהמערכת שלכם",
+    "action": "file",
+    "target_file": "השתקת קבלת התראות וצינתוקים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 10744,
+    "title": "שלוחה לדיווח שיעורים",
+    "action": "file",
+    "target_file": "שלוחה לדיווח שיעורים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 10156,
+    "title": "הרשאת כניסה לשלוחה (פילטר) לפי האזנה לקובץ מסוים במערכת",
+    "action": "append",
+    "target_file": "הרשאות כניסה לשלוחה.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 9779,
+    "title": "שליחת צנתוק למחייג בכניסה לשלוחה",
+    "action": "append",
+    "target_file": "צינתוקים חינמיים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 9771,
+    "title": "מודול יצירת קבצי tts",
+    "action": "file",
+    "target_file": "שלוחה ליצירת קבצי tts.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 9616,
+    "title": "הסבר כללי על צבירת נקודות והגדרות לניקוד שתקפות בכלל המערכת",
+    "action": "file",
+    "target_file": "הניקוד במערכת - הסבר והגדרות.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 5821,
+    "title": "הקלטות - record",
+    "action": "file",
+    "target_file": "הקלטות.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 8830,
+    "title": "סוגי זמן במערכת",
+    "action": "file",
+    "target_file": "סוגי זמן ואזורי זמן.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 8829,
+    "title": "אזורי זמן במערכת",
+    "action": "append",
+    "target_file": "סוגי זמן ואזורי זמן.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 3779,
+    "title": "קבלת הקלטות ונתונים - recording_and_entering_data",
+    "action": "file",
+    "target_file": "קבלת הקלטות ונתונים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 31,
+    "title": "השמעת נתונים והודעות אישיות - id_message | id_list_message",
+    "action": "file",
+    "target_file": "השמעת נתונים ו-או הודעות אישיות.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 28,
+    "title": "שידור חי מדומה - מרובה קבצים - השמעת כל הקבצים בשלוחה בהתאם לזמן המוגדר - playdir_time",
+    "action": "file",
+    "target_file": "playdir_time שידור חי מדומה.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 7869,
+    "title": "כניסה לפי מפתח - מעבר | השמעות | קבלת הקשות והקלטות לפי הקשת המשתמש",
+    "action": "file",
+    "target_file": "כניסה לפי מפתח - key_play_set_record_go_to_foldar.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 6996,
+    "title": "הגל השקט + היסטוריית אזעקות",
+    "action": "file",
+    "target_file": "הגל השקט ואזעקות.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 8325,
+    "title": "אופן יצירת  קבצי TTS",
+    "action": "append",
+    "target_file": "שלוחה ליצירת קבצי tts.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 8320,
+    "title": "דוחות מסוג ymgr html ו-csv",
+    "action": "file",
+    "target_file": "דוחות מסוג ymgr html ו-csv.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 8248,
+    "title": "השמעת הודעות קמפיין בכניסה לשלוחה",
+    "action": "file",
+    "target_file": "השמעת הודעות קמפיין בכניסה לשלוחה.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 60,
+    "title": "שלוחת הוספת ניקוד points_save",
+    "action": "file",
+    "target_file": "שלוחת הוספת ניקוד points_save.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 63,
+    "title": "שלוחת השמעת הנקודות שנצברו points_say_total",
+    "action": "append",
+    "target_file": "הניקוד במערכת - הסבר והגדרות.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 8249,
+    "title": "שליחת DTMF מוגדר מראש (דימוי הקשות)",
+    "action": "file",
+    "target_file": "שליחת DTMF מוגדר מראש (דימוי הקשות).txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 8247,
+    "title": "שליחת הודעה לטלגרם בכל כניסה לשלוחה",
+    "action": "file",
+    "target_file": "שליחת הודעה לטלגרם בכל כניסה לשלוחה.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 57,
+    "title": "limit_call_seconds - הגבלת אורך השיחה, \"טיימר\"",
+    "action": "file",
+    "target_file": "limit_call_seconds - הגבלת אורך השיחה, -טיימר-.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 56,
+    "title": "מודול API - תקשור עם מחשבים וממשקי נתונים חיצוניים",
+    "action": "file",
+    "target_file": "מודול API - תקשור עם מחשבים וממשקי נתונים חיצוניים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 8219,
+    "title": "סדר פעולות בכניסה לשלוחה לפני המעבר למודול עצמו",
+    "action": "file",
+    "target_file": "סדר פעולות בכניסה לשלוחה לפני המעבר למודול עצמו.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 8191,
+    "title": "חלוקת קודים",
+    "action": "file",
+    "target_file": "חלוקת קודים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 7795,
+    "title": "תזמון השמעת קבצים - מודול playfile",
+    "action": "file",
+    "target_file": "הפעלת קובץ בשעה מתוזמנת (שידור חי מדומה).txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 7635,
+    "title": "שופינג.פון - מרכז הקניות של חברת ימות המשיח",
+    "action": "file",
+    "target_file": "מרכז הקניות.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 7023,
+    "title": "מודול שליחת קובץ למייל של המאזין",
+    "action": "file",
+    "target_file": "שליחת קובץ למייל של המאזין.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 7602,
+    "title": "יצירת קובץ ini",
+    "action": "ignore",
+    "target_file": "",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": "הסבר טכני בסיסי על יצירת קובץ ini במחשב"
+  },
+  {
+    "tid": 40,
+    "title": "הגדרת הפנית שיחה לשלוחה פנימית לפי מספר מחייג או מחויג",
+    "action": "file",
+    "target_file": "הגדרת הפנית שיחה לשלוחה פנימית לפי מספר מחייג או מחויג.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 44,
+    "title": "מוזיקה בהמתנה",
+    "action": "file",
+    "target_file": "שלוחת מוזיקה בהמתנה.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 218,
+    "title": "ניתובי שיחה למענה אנושי - כל הסוגים",
+    "action": "file",
+    "target_file": "ניתובי שיחה למענה אנושי - כל הסוגים (ראוטינג-ראוטינג טיים-תור-ראוטינג טלגרם).txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 7519,
+    "title": "ראוטינג טלגרם - העברת שיחה למשתמש טלגרם",
+    "action": "file",
+    "target_file": "ראוטינג טלגרם - העברת שיחה למשתמש טלגרם.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 7078,
+    "title": "מודול שליחת הזמנה לחבר להצטרפות לרשימת התפוצה",
+    "action": "file",
+    "target_file": "שליחת הזמנה לחבר להצטרפות לרשימת התפוצה.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 58,
+    "title": "הוספה והסרת המספר המחייג מרשימת התפוצה - template_add_number/template_remove_number",
+    "action": "file",
+    "target_file": "הוספה והסרת המספר המחייג מרשימת התפוצה.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 6843,
+    "title": "השמעת המספר של המתקשר",
+    "action": "file",
+    "target_file": "השמעת המספר של המתקשר.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 6619,
+    "title": "מקלדת עברית ואנגלית",
+    "action": "file",
+    "target_file": "מקלדת עברית ואנגלית.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 32,
+    "title": "access_filter פילטר כניסה לשלוחות לפי תאריך עברי / לועזי / ספירת העומר / חנוכה - הגבלת הפעמים לכניסה לשלוחה לכל מאזין",
+    "action": "file",
+    "target_file": "access_filter פילטר כניסה לשלוחות לפי תאריך עברי - לועזי - ספירת העומר - חנוכה - הגבלת הפעמים לכניסה לשלוחה לכל מאזין.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 6174,
+    "title": "מודול קבלת ברכה מהרבי מליובאוויטש שליט\"א מלך המשיח.",
+    "action": "file",
+    "target_file": "מודול קבלת ברכה.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 6165,
+    "title": "מודול אקסס פילטר כמודול או כהטמעה בכל מודול",
+    "action": "file",
+    "target_file": "מודול אקסס פילטר כמודול או כהטמעה בכל מודול - הפילטר עם הכי הרבה אפשרויות.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 6152,
+    "title": "קובץ שקט תקין להחלפת הודעות מערכת",
+    "action": "ignore",
+    "target_file": "",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": "קובץ שקט להורדה בלבד"
+  },
+  {
+    "tid": 6133,
+    "title": "מודול sip - הגדרות לחיוג מטלפון משרדי או משלוחת sip",
+    "action": "file",
+    "target_file": "מודול sip - הגדרות לחיוג מטלפון משרדי או משלוחת sip.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 5934,
+    "title": "[[topic:topic-is-deleted]]",
+    "action": "ignore",
+    "target_file": "",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": "נושא נמחק בפורום"
+  },
+  {
+    "tid": 5721,
+    "title": "פילטר כניסה לשלוחה לפי כמות נקודות - הטמעה בכל מודול",
+    "action": "file",
+    "target_file": "פילטר כניסה לשלוחה לפי כמות נקודות - הטמעה בכל מודול.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 2099,
+    "title": "מרכז הקניות (שרשור ישן)",
+    "action": "file",
+    "target_file": "מרכז הקניות.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 5363,
+    "title": "מונה ברכות יומי - get_brachot",
+    "action": "file",
+    "target_file": "מונה ברכות יומי.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 104,
+    "title": "מודול קבלת פקסים - Fax to mail",
+    "action": "file",
+    "target_file": "קבלת פקסים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 4874,
+    "title": "clicks קליקס - משחק קליקרים, השמעת קבצים עם אפשרות להקשת מקשים / עניית תשובות במהלך ההשמעה",
+    "action": "file",
+    "target_file": "קליקרים - שידור חי רציף מדומה.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 4005,
+    "title": "playfile_and_enter_digits_time - קליקרים  + שידור חי רציף מדומה מרובה קבצים",
+    "action": "file",
+    "target_file": "playfile_and_enter_digits_time - קליקרים  + שידור חי רציף מדומה מרובה קבצים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 38,
+    "title": "מעבר לשלוחה אחרת - go_to_folder",
+    "action": "file",
+    "target_file": "מעבר לשלוחה אחרת - go_to_folder.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 3831,
+    "title": "הוראות להפעלת הממשק ניהול ושליטה על חדרי הועידה החדש",
+    "action": "append",
+    "target_file": "confbridge - חדר ועידה - שידור חי.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 3812,
+    "title": "זימון תורים",
+    "action": "file",
+    "target_file": "זימון תורים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 8255,
+    "title": "[[topic:topic-is-deleted]]",
+    "action": "ignore",
+    "target_file": "",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": "נושא נמחק בפורום"
+  },
+  {
+    "tid": 8470,
+    "title": "בדיקת הרשאת כניסה מול API  כמודול או כהטמעה בכל מודול",
+    "action": "file",
+    "target_file": "בדיקת הרשאת כניסה מול API  כמודול או כהטמעה בכל מודול.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 3240,
+    "title": "מודול שליחת פקסים חדש",
+    "action": "file",
+    "target_file": "שליחת פקסים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 47,
+    "title": "חלוקת פרקי תהילים / גמרא /פרשות/דפים/עמודים - chapter_receive",
+    "action": "file",
+    "target_file": "חלוקת פרקי תהילים - גמרא -פרשות-דפים-עמודים - chapter_receive.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 2797,
+    "title": "חיבור IAX למערכת - אפשרות לבצע חיוג ולקבל שיחות מהמחשב למערכת שלכם",
+    "action": "file",
+    "target_file": "חיבור IAX למערכת - אפשרות לבצע חיוג ולקבל שיחות מהמחשב למערכת שלכם.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 2795,
+    "title": "[[topic:topic-is-deleted]]",
+    "action": "ignore",
+    "target_file": "",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": "נושא נמחק בפורום"
+  },
+  {
+    "tid": 2704,
+    "title": "שלוחה לניהול קמפיין",
+    "action": "file",
+    "target_file": "שלוחה לניהול קמפיין.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 2678,
+    "title": "מודול הסרת ערך ID של המתקשר או ערך מוגדר מראש מקובץ במערכת לבחירתכם",
+    "action": "file",
+    "target_file": "מודול הסרת ערך ID של המתקשר או ערך מוגדר מראש מקובץ במערכת לבחירתכם.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 2616,
+    "title": "מודול שליחת sms ללקוח בכניסה לשלוחה ומעבר לשלוחה אחרת",
+    "action": "file",
+    "target_file": "מודול שליחת sms ללקוח בכניסה לשלוחה ומעבר לשלוחה אחרת.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 2468,
+    "title": "הגדרות עבור מנוע זיהוי דיבור",
+    "action": "file",
+    "target_file": "הגדרות עבור מנוע זיהוי דיבור.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 2439,
+    "title": "הגבלת כמות כניסה לשלוחה בצורה כללית",
+    "action": "file",
+    "target_file": "הגבלת כמות כניסה לשלוחה בצורה כללית.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 1980,
+    "title": "בדיקת יתרת יחידות כהטמעה בכל מודול או בכניסה למערכת כולל שליחת שיחה למנהל הקו",
+    "action": "file",
+    "target_file": "בדיקת יתרת יחידות כהטמעה בכל מודול או בכניסה למערכת כולל שליחת שיחה למנהל הקו.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 4,
+    "title": "הקלטת הודעות מערכת בשלוחה",
+    "action": "file",
+    "target_file": "הקלטת הודעות מערכת בשלוחה.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 364,
+    "title": "המספר הנוסף כמודול - נסיוני - מספר אישי",
+    "action": "file",
+    "target_file": "המספר הנוסף כמודול - נסיוני - מספר אישי.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 1462,
+    "title": "מודול סקר החדש - seker_questions",
+    "action": "file",
+    "target_file": "סקר.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 1359,
+    "title": "השמעת הודעה בלבד - חזרה בכל מקש / השמעה בלי אפשרות חזרה",
+    "action": "file",
+    "target_file": "השמעת הודעה בלבד - חזרה בכל מקש - השמעה בלי אפשרות חזרה.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 10,
+    "title": "השמעת קבצים / מערכת תגובות",
+    "action": "append",
+    "target_file": "השמעת קבצים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 1062,
+    "title": "עריכת סיסמה אישית",
+    "action": "file",
+    "target_file": "עריכת סיסמה אישית וסיסמת שלוחה מסויימת.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 1049,
+    "title": "שלוחת שינוי סיסמה לשלוחה במערכת",
+    "action": "file",
+    "target_file": "שלוחת שינוי סיסמה לשלוחה במערכת.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 811,
+    "title": "קמפיין הודעות אישיות בAPI - אפשרות שהלקוח יחזור למספר וישמע את ההודעה שלו",
+    "action": "file",
+    "target_file": "קמפיין הודעות אישיות בAPI - אפשרות שהלקוח יחזור למספר וישמע את ההודעה שלו.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 896,
+    "title": "מודול שיחות שלא נענו - קבלת התראה במייל/סמס",
+    "action": "file",
+    "target_file": "מודול שיחות שלא נענו - קבלת התראה במייל-סמס.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 857,
+    "title": "הפעלת שלוחה רנדומלית",
+    "action": "file",
+    "target_file": "הפעלת שלוחה רנדומלית.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 610,
+    "title": "שמיעת כמות החברים - בדיקה האם מספר מסויים קיים - שמיעת כל המספרים ברצף",
+    "action": "file",
+    "target_file": "שמיעת כמות החברים - בדיקה האם מספר מסויים קיים - שמיעת כל המספרים ברצף.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 589,
+    "title": "מודול הוספת ערך ID של המתקשר או ערך מוגדר מראש לקובץ במערכת לבחירתכם",
+    "action": "file",
+    "target_file": "מודול הוספת ערך ID של המתקשר או ערך מוגדר מראש לקובץ במערכת לבחירתכם.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 481,
+    "title": "שליחת סמס ללקוח בכניסה לשלוחה כהטמעה בכל מודול",
+    "action": "file",
+    "target_file": "שליחת סמס ללקוח בכניסה לשלוחה כהטמעה בכל מודול.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 377,
+    "title": "הפעלת קובץ בשעה מתוזמנת (שידור חי מדומה) playfile_time",
+    "action": "file",
+    "target_file": "הפעלת קובץ בשעה מתוזמנת (שידור חי מדומה).txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 94,
+    "title": "פילטר לפי מספר רשימות תפוצה שונות - כהטמעה בכל מודול",
+    "action": "file",
+    "target_file": "פילטר לפי מספר רשימות תפוצה שונות - כהטמעה בכל מודול.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 41,
+    "title": "הפניית משתמשים לשלוחות שונות לפי רשימת התפוצה - template_filter",
+    "action": "file",
+    "target_file": "הפניית משתמשים לשלוחות שונות לפי רשימת התפוצה.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 206,
+    "title": "מודול זמני תחבורה ציבורית",
+    "action": "file",
+    "target_file": "מודול זמני תחבורה ציבורית.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 204,
+    "title": "מעקב לימודים",
+    "action": "file",
+    "target_file": "מעקב לימודים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 8056,
+    "title": "דיגיקול - דפי נחיתה עם התממשקות טלפונית",
+    "action": "ignore",
+    "target_file": "",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": "דפי נחיתה דיגיקול - שירות חיצוני"
+  },
+  {
+    "tid": 110,
+    "title": "מודול points_to_other_id הוספת ניקוד למשתמש אחר",
+    "action": "append",
+    "target_file": "הניקוד במערכת - הסבר והגדרות.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 109,
+    "title": "zmanim זמני היום והמרת תאריך עברי לועזי והפוך",
+    "action": "file",
+    "target_file": "zmanim זמני היום והמרת תאריך עברי לועזי והפוך.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 108,
+    "title": "מודול כמות חברים פעילים members_active",
+    "action": "file",
+    "target_file": "מודול כמות חברים פעילים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 107,
+    "title": "מודול חישוב מונה",
+    "action": "file",
+    "target_file": "חישוב מונה.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 106,
+    "title": "שליחת הודעת טקסט מהמערכת מהזיהוי של המתקשר",
+    "action": "append",
+    "target_file": "שליחת SMS למתקשר או לאחרים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 105,
+    "title": "בדיקת יתרת יחידות נמוכה או פג תוקף מתקרב",
+    "action": "file",
+    "target_file": "בדיקת יתרת יחידות נמוכה או פג תוקף מתקרב.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 103,
+    "title": "המרת קבצי קול לטקסט stt_dir_all_file",
+    "action": "file",
+    "target_file": "המרת קבצי קול לטקסט.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 102,
+    "title": "מערכת חלוקת משניות, כולל שמיעת המשניות מ4 קריינים, ודוחות לימוד - chapter_receive_mishnayot_select",
+    "action": "file",
+    "target_file": "מערכת חלוקת משניות, כולל שמיעת המשניות מ4 קריינים, ודוחות לימוד - chapter_receive_mishnayot_select.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 101,
+    "title": "סוג כניסה של רשימה עם השם ביחד",
+    "action": "append",
+    "target_file": "הגדרות הזיהוי בכלל המערכת.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 99,
+    "title": "הפעלת קמפיינים יוצאים בtts",
+    "action": "append",
+    "target_file": "שלוחה ליצירת קבצי tts.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 98,
+    "title": "רשימת השלוחות שאפשר להגדיר גם ע\"י הטלפון",
+    "action": "file",
+    "target_file": "רשימת השלוחות שאפשר להגדיר ע\"י הטלפון.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 96,
+    "title": "שלוחת כוכבית",
+    "action": "append",
+    "target_file": "תפריט.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 93,
+    "title": "מודול התרמות",
+    "action": "file",
+    "target_file": "התרמות (מצ_ינג).txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 92,
+    "title": "מודול מבחן - examination",
+    "action": "file",
+    "target_file": "מבחן - מבחן אמריקאי.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 85,
+    "title": "מבחן אמריקאי examination_american",
+    "action": "file",
+    "target_file": "מבחן אמריקאי examination_american.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 80,
+    "title": "ספירת כמות מספרי טלפון שונים שנכנסו לשלוחה",
+    "action": "file",
+    "target_file": "ספירת כמות מספרי טלפון שונים שנכנסו לשלוחה.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 79,
+    "title": "מודול סקר - כולל השמעת התוצאות בזמן אמת",
+    "action": "file",
+    "target_file": "סקר.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 78,
+    "title": "כל סוגי השלוחות הקיימות",
+    "action": "file",
+    "target_file": "כל סוגי השלוחות הקיימות.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 76,
+    "title": "calculator_add_percentage - מחשבון אחוזי תוספת",
+    "action": "file",
+    "target_file": "מחשבון אחוזי תוספת.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 75,
+    "title": "הגדרות שיתוף בין מערכות ווצאפון לivr2 וכן להיפך",
+    "action": "file",
+    "target_file": "הגדרות שיתוף בין מערכות.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 74,
+    "title": "השעה כעת - say_hour_and_minute",
+    "action": "file",
+    "target_file": "השעה כעת - say_hour_and_minute.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 73,
+    "title": "חסימת משתמש block_id_type",
+    "action": "file",
+    "target_file": "חסימת משתמש.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 72,
+    "title": "זמני היום וזמני השבת",
+    "action": "file",
+    "target_file": "זמני היום וזמני השבת.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 71,
+    "title": "time_keeper שעון נוכחות",
+    "action": "file",
+    "target_file": "שעון נוכחות.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 70,
+    "title": "מודול שליחת פקסים send_fax",
+    "action": "file",
+    "target_file": "שליחת פקסים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 69,
+    "title": "מודול מעקב גיוס תרומות fundraising",
+    "action": "file",
+    "target_file": "מעקב גיוס תרומות.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 68,
+    "title": "שלוחה המנתקת את השיחה - hangup",
+    "action": "file",
+    "target_file": "שלוחת ניתוק שיחה.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 67,
+    "title": "\"המספר כעת\" לתור (לדוגמה במרפאות, בדואר) והשמעת קופונים קבועים - number_now_is",
+    "action": "file",
+    "target_file": "השמעת _המספר כעת הוא_.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 66,
+    "title": "חלוקת אישורים approval_number",
+    "action": "file",
+    "target_file": "חלוקת אישורים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 65,
+    "title": "חלוקת קופונים - coupon",
+    "action": "file",
+    "target_file": "חלוקת קופונים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 64,
+    "title": "points_and_rating מודול נקודות ללקוח על קניה, ודירוג בעל העסק",
+    "action": "file",
+    "target_file": "points_and_rating מודול נקודות ללקוח על קניה, ודירוג בעל העסק.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 61,
+    "title": "מודול הוספת / הורדת נקודות ללקוח על ידי מנהלים points_edit",
+    "action": "file",
+    "target_file": "מודול הוספת - הורדת נקודות ללקוח על ידי מנהלים points_edit.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 59,
+    "title": "מודול הוספה, הסרה או חסימה מתבניות רשימות התפוצה yemot_dialer_campaign_list",
+    "action": "file",
+    "target_file": "מודול הוספה, הסרה או חסימה מתבניות רשימות התפוצה yemot_dialer_campaign_list.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 50,
+    "title": "מערכת מכירת כסאות לבתי כנסת , אירועים וכד' sale_seats",
+    "action": "file",
+    "target_file": "מערכת מכירת כסאות לבתי כנסת , אירועים וכד' sale_seats.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 49,
+    "title": "מכירות | הזמנת מוצר לפי מק\"ט (מספר קטלוגי) sale_products",
+    "action": "file",
+    "target_file": "מכירות - הזמנת מוצר לפי מק-ט (מספר קטלוגי) sale_products.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 48,
+    "title": "מודול בחירת ושמירת פרק תהילים קבוע ללקוח tehillim_select_save_and_listen",
+    "action": "file",
+    "target_file": "מודול בחירת ושמירת פרק תהילים קבוע ללקוח tehillim_select_save_and_listen.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 46,
+    "title": "routing - ניתוב שלוחה (למערכת אחרת, למספר טלפון, לכמה מספרים ביחד, ל1800 לIP)",
+    "action": "append",
+    "target_file": "ניתובי שיחה למענה אנושי - כל הסוגים (ראוטינג-ראוטינג טיים-תור-ראוטינג טלגרם).txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 45,
+    "title": "הפעלה מהירה לקמפיין",
+    "action": "file",
+    "target_file": "הפעלה מהירה לקמפיין.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 43,
+    "title": "דיווח משימות יומי",
+    "action": "file",
+    "target_file": "דיווח משימות יומי.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 42,
+    "title": "שלוחת ניהול המערכת admin_login",
+    "action": "file",
+    "target_file": "שלוחת ניהול המערכת.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 39,
+    "title": "מעבר לשלוחות שונות - לפי כמות מאזינים",
+    "action": "file",
+    "target_file": "מעבר לשלוחות שונות - לפי כמות מאזינים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 37,
+    "title": "ההעברה לשלוחה אחרת - לפי תאריך עברי / לועזי או/ו לפי שעה / דקה",
+    "action": "file",
+    "target_file": "ההעברה לשלוחה אחרת - לפי תאריך עברי - לועזי או-ו לפי שעה - דקה.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 36,
+    "title": "שלוחת העברה לתיקיות אחרות לפי שעות/ימים - go_to_folder_time",
+    "action": "append",
+    "target_file": "מעבר לשלוחה אחרת - כמה אפשרויות.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 35,
+    "title": "פילטר לפי רשימות: ההעברה לשלוחה אחרת לפי הגדרות ספציפיות ללקוח לפי קובץ",
+    "action": "file",
+    "target_file": "פילטר לפי רשימות- ההעברה לשלוחה אחרת לפי הגדרות ספציפיות ללקוח לפי קובץ.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 30,
+    "title": "תא קולי השולח העתק לדוא\"ל - voicemail_email",
+    "action": "file",
+    "target_file": "תא קולי השולח העתק לדוא-ל - voicemail_email.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 26,
+    "title": "הפעלת שלוחה רנדומלית - folder_play_random",
+    "action": "append",
+    "target_file": "הפעלת שלוחה רנדומלית.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 15,
+    "title": "הודעה יומית מתחלפת ומעבר לשלוחה אחרת",
+    "action": "file",
+    "target_file": "הודעה יומית מתחלפת ומעבר לשלוחה אחרת.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 14,
+    "title": "השמעת הודעת לפי תאריך עברי / לועזי / ספירת העומר / חנוכה - כולל הגבלת הפעמים להשמעת הודעה למאזין - toplay_time",
+    "action": "file",
+    "target_file": "השמעת הודעת לפי תאריך עברי - לועזי - ספירת העומר - חנוכה - כולל הגבלת הפעמים להשמעת הודעה למאזין - toplay_time.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 12,
+    "title": "השמעת קבצים / דירוגים - Rating",
+    "action": "append",
+    "target_file": "השמעת קבצים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 11,
+    "title": "השמעת קבצים / ניקוד על האזנה",
+    "action": "append",
+    "target_file": "הניקוד במערכת - הסבר והגדרות.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 9,
+    "title": "שלוחה המאפשרת למאזין לבחור האם בשלוחת השמעת קבצים יהיה לו תפריט בחירת קובץ או לא - type=start_select_file",
+    "action": "append",
+    "target_file": "השמעת קבצים.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  },
+  {
+    "tid": 7,
+    "title": "תפריט עם זיהוי דיבור קולי menu_voice",
+    "action": "append",
+    "target_file": "תפריט.txt",
+    "post_filter": {
+      "mode": "author_only",
+      "authors": [
+        "שמואל",
+        "שמחה - זו הסיסמא",
+        "eliyahu",
+        "ימות המשיח"
+      ],
+      "exclude_pids": [],
+      "include_pids": [],
+      "min_length": 30
+    },
+    "reason": ""
+  }
+]

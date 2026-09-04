@@ -53,6 +53,12 @@ function doPost(e) {
 
 function handleRequest(params) {
   params = params || {};
+
+  // טיפול בהתראות מייל מהוורקר על נושאים חדשים שטרם סווגו
+  if (params.action === 'notifyNewTopics' || params.action === 'sendAlert') {
+    return handleNewTopicsAlert(params);
+  }
+
   const text = params.text;
   const path = params.path;
   const token = params.token;
@@ -751,3 +757,80 @@ function fetchWithRetry(url, options) {
   Logger.log(`Failed all ${MAX_HTTP_RETRIES} retries for: ${url}`);
   return response;
 }
+
+// -------------------------------------------------------------------
+// שליחת התראת מייל על נושאים חדשים שזוהו בפורום ע"י הוורקר
+// -------------------------------------------------------------------
+
+function handleNewTopicsAlert(params) {
+  const secret = params.secret || params.admin_secret;
+  const expectedSecret = SCRIPT_PROPS['ADMIN_SECRET'] || 'yemot_admin_secret';
+
+  if (!secret || secret !== expectedSecret) {
+    Logger.log("Unauthorized alert attempt.");
+    return ContentService.createTextOutput(JSON.stringify({
+      status: "error",
+      message: "Unauthorized: Invalid admin secret"
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+
+  let topics = params.topics || [];
+  if (typeof topics === 'string') {
+    try {
+      topics = JSON.parse(topics);
+    } catch (e) {
+      topics = [];
+    }
+  }
+
+  if (!topics || topics.length === 0) {
+    return ContentService.createTextOutput(JSON.stringify({
+      status: "ok",
+      message: "No topics provided"
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+
+  const alertEmail = SCRIPT_PROPS['ALERT_EMAIL'] || Session.getActiveUser().getEmail();
+  if (!alertEmail) {
+    Logger.log("No recipient email found for alerts.");
+    return ContentService.createTextOutput(JSON.stringify({
+      status: "error",
+      message: "ALERT_EMAIL is not configured"
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+
+  const subject = `[התראת ימות המשיח] זוהו ${topics.length} נושאים חדשים בפורום ללא סיווג`;
+
+  let htmlBody = `<h3>שלום,</h3>`;
+  htmlBody += `<p>וורקר סנכרון התיעוד זיהה <b>${topics.length} נושאים חדשים</b> בקטגוריה 1 בפורום ימות המשיח שטרם סווגו:</p>`;
+  htmlBody += `<ul>`;
+  for (let i = 0; i < topics.length; i++) {
+    const t = topics[i];
+    const url = t.url || `https://f2.freeivr.co.il/topic/${t.tid}`;
+    htmlBody += `<li><b>[TID ${t.tid}]</b> <a href="${url}" target="_blank">${t.title}</a> (מספר פוסטים: ${t.postcount || 1})</li>`;
+  }
+  htmlBody += `</ul>`;
+  htmlBody += `<p>יש לעדכן את קובץ <code>scraper/topics_config.json</code> עם הסיווג הרצוי (התעלמות / יצירת קובץ / שרשור לקובץ קיים).</p>`;
+  htmlBody += `<hr><small>נשלח אוטומטית ממערכת AI_yemot</small>`;
+
+  try {
+    MailApp.sendEmail({
+      to: alertEmail,
+      subject: subject,
+      htmlBody: htmlBody
+    });
+    Logger.log(`Alert email sent to ${alertEmail} for ${topics.length} topics.`);
+    return ContentService.createTextOutput(JSON.stringify({
+      status: "ok",
+      sent_to: alertEmail,
+      count: topics.length
+    })).setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    Logger.log(`Failed to send alert email: ${err.message}`);
+    return ContentService.createTextOutput(JSON.stringify({
+      status: "error",
+      message: err.message
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
