@@ -62,10 +62,22 @@
   let copyFeedback = $state(false);
   let contentContainerRef = $state(null);
 
+  function preprocessMarkdown(content) {
+    if (!content) return "";
+    return content.replace(/\[([^\]]+)\]\(([^)\n]+)\)/g, (match, text, href) => {
+      const trimmed = href.trim();
+      if (trimmed.includes(" ") && !trimmed.startsWith("<") && !trimmed.endsWith(">")) {
+        return `[${text}](<${trimmed}>)`;
+      }
+      return match;
+    });
+  }
+
   let renderedMarkdownHtml = $derived.by(() => {
     if (!selectedFileContent) return "";
     try {
-      return marked.parse(selectedFileContent);
+      const preprocessed = preprocessMarkdown(selectedFileContent);
+      return marked.parse(preprocessed);
     } catch (e) {
       console.error("Markdown parse error:", e);
       return selectedFileContent;
@@ -438,7 +450,10 @@
       return;
     }
 
-    const decodedHref = decodeURIComponent(href);
+    let decodedHref = decodeURIComponent(href).trim();
+    if (decodedHref.startsWith("<") && decodedHref.endsWith(">")) {
+      decodedHref = decodedHref.slice(1, -1).trim();
+    }
     const hashIndex = decodedHref.indexOf("#");
     let targetFile =
       hashIndex >= 0 ? decodedHref.slice(0, hashIndex) : decodedHref;

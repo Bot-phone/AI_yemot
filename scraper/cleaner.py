@@ -122,7 +122,10 @@ def clean_html_content(raw_html: str, link_resolver=None, current_file: str = ""
             md_link = link_resolver(href, a_text, current_file)
             a.replace_with(md_link)
         else:
-            a.replace_with(f"[{a_text}]({href})")
+            clean_href = href.strip()
+            if " " in clean_href and not (clean_href.startswith("<") and clean_href.endswith(">")):
+                clean_href = f"<{clean_href}>"
+            a.replace_with(f"[{a_text}]({clean_href})")
 
     # 2ג. הדגשות <strong> ו-<b>
     for b in soup.find_all(['strong', 'b']):

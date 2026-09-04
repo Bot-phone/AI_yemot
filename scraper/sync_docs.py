@@ -244,6 +244,8 @@ class LinkResolver:
                     if heading:
                         display_text = f"{display_text} ({heading})"
 
+                if " " in dest and not (dest.startswith("<") and dest.endswith(">")):
+                    dest = f"<{dest}>"
                 return f"[{display_text}]({dest})"
 
         # אם היעד מחוץ לקטגוריה 1, השארת קישור רשת רגיל
