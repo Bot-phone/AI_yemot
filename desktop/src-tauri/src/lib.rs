@@ -16,6 +16,11 @@ pub fn run() {
             yemot::request_yemot_mfa,
             yemot::verify_yemot_mfa,
             yemot::execute_yemot_action,
+            yemot::login_yemot,
+            yemot::get_mfa_methods,
+            yemot::send_mfa_code,
+            yemot::validate_mfa_code,
+            yemot::logout_yemot,
             ai::send_ai_request,
         ])
         .run(tauri::generate_context!())

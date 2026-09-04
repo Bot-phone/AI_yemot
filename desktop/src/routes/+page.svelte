@@ -1,6 +1,10 @@
 <script>
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import { t, i18n, isRTL, setLocale, availableLocales } from "$lib/i18n.svelte.js";
+
+  // Interface direction (reactive to language changes)
+  let rtl = $derived(isRTL());
 
   // State (Svelte 5 Runes)
   let targetMode = $state("script"); // "script" | "direct"
@@ -9,7 +13,6 @@
   let promptText = $state("");
   let yemotToken = $state("");
   let showToken = $state(false);
-  let apiType = $state("system"); // "system" (2411) | "private"
   let apiKey = $state("");
   let showApiKey = $state(false);
   let isPreviewMode = $state(true);
@@ -25,6 +28,22 @@
 
   // Token verification status
   let tokenStatus = $state(null); // null | { valid: bool, message: string }
+
+  // Login (create token) state
+  let showLoginModal = $state(false);
+  let loginUsername = $state("");
+  let loginPassword = $state("");
+  let loginShowPassword = $state(false);
+  let loginToken = $state("");
+  let loginStep = $state("credentials"); // "credentials" | "mfa"
+  let loginMethods = $state([]);
+  let loginMethodId = $state("");
+  let loginSendType = $state("");
+  let loginCode = $state("");
+  let loginCodeSent = $state(false);
+  let loginStatus = $state("");
+  let loginError = $state("");
+  let loginLoading = $state(false);
 
   // Knowledge Explorer
   let knowledgeFiles = $state([]);
@@ -84,30 +103,33 @@
 
   async function checkToken() {
     if (!yemotToken.trim()) {
-      tokenStatus = { valid: false, message: "נא להזין טוקן תחילה" };
+      tokenStatus = { valid: false, message: t("enter_token_first") };
       return;
     }
-    statusMessage = "בודק תקינות טוקן מול ימות המשיח...";
+    statusMessage = t("checking_token");
     try {
       const res = await invoke("check_yemot_token", { token: yemotToken.trim() });
       if (res.success) {
         tokenStatus = { valid: true, message: res.message };
+        try {
+          localStorage.setItem("ai_yemot_token", yemotToken.trim());
+        } catch (_) {}
       } else if (res.mfa_required) {
-        tokenStatus = { valid: false, message: "נדרש אימות דו-שלבי (MFA)" };
+        tokenStatus = { valid: false, message: t("mfa_required") };
         mfaToken = res.mfa_token || "";
         showMfaModal = true;
       } else {
         tokenStatus = { valid: false, message: res.message };
       }
     } catch (e) {
-      tokenStatus = { valid: false, message: "שגיאת תקשורת: " + e };
+      tokenStatus = { valid: false, message: t("comm_error", { error: e }) };
     } finally {
       statusMessage = "";
     }
   }
 
   async function requestMfa() {
-    mfaStatus = "שולח קוד אימות...";
+    mfaStatus = t("sending_code");
     try {
       const res = await invoke("request_yemot_mfa", {
         token: yemotToken.trim(),
@@ -116,16 +138,16 @@
       });
       mfaStatus = res.message;
     } catch (e) {
-      mfaStatus = "שגיאה: " + e;
+      mfaStatus = t("error", { error: e });
     }
   }
 
   async function verifyMfa() {
     if (!mfaCode.trim()) {
-      mfaStatus = "נא להזין קוד אימות";
+      mfaStatus = t("enter_mfa_code");
       return;
     }
-    mfaStatus = "מאמת קוד...";
+    mfaStatus = t("verifying_code");
     try {
       const res = await invoke("verify_yemot_mfa", {
         token: yemotToken.trim(),
@@ -138,23 +160,27 @@
           saveSettings();
         }
         showMfaModal = false;
-        tokenStatus = { valid: true, message: "האימות הושלם בהצלחה!" };
+        tokenStatus = { valid: true, message: t("mfa_success") };
       } else {
         mfaStatus = res.message;
       }
     } catch (e) {
-      mfaStatus = "שגיאה: " + e;
+      mfaStatus = t("error", { error: e });
     }
   }
 
   async function handleSubmit(event) {
     event.preventDefault();
     if (!promptText.trim()) {
-      errorMessage = "נא להזין הנחיות או בקשה לעדכון שלוחה";
+      errorMessage = t("enter_prompt");
       return;
     }
     if (!yemotToken.trim()) {
-      errorMessage = "נא להזין טוקן של ימות המשיח";
+      errorMessage = t("enter_yemot_token");
+      return;
+    }
+    if (targetMode === "direct" && !apiKey.trim()) {
+      errorMessage = t("api_key_required");
       return;
     }
 
@@ -163,7 +189,7 @@
     resultOutput = "";
     parsedActions = [];
     isLoading = true;
-    statusMessage = targetMode === "script" ? "שולח בקשה לסקריפט..." : "מעבד מול מודל ה-AI...";
+    statusMessage = targetMode === "script" ? t("sending_to_script") : t("processing_ai");
 
     try {
       const payload = {
@@ -173,7 +199,6 @@
         prompt: promptText.trim(),
         token: yemotToken.trim(),
         api_key: apiKey.trim(),
-        api_type: apiType,
         is_preview: isPreviewMode,
         logout: logoutOnFinish,
         script_url: scriptUrl.trim()
@@ -185,20 +210,24 @@
         if (res.is_preview) {
           parseActionList(res.raw_response);
         }
-        statusMessage = "הבקשה הושלמה בהצלחה!";
+        statusMessage = t("request_success");
       } else {
-        errorMessage = res.message || "אירעה שגיאה בביצוע הבקשה";
+        errorMessage = res.message || t("request_failed");
       }
     } catch (e) {
-      errorMessage = "שגיאה בתקשורת: " + e;
+      errorMessage = t("comm_error", { error: e });
     } finally {
       isLoading = false;
+      // Logout is performed locally — the token never reaches the script/AI.
+      if (logoutOnFinish) {
+        await localLogout();
+      }
     }
   }
 
   function parseActionList(raw) {
+    // Try parsing as JSON array
     try {
-      // Try parsing as JSON array
       const json = JSON.parse(raw);
       if (Array.isArray(json)) {
         parsedActions = json.map(item => ({
@@ -212,11 +241,35 @@
       }
     } catch (_) {}
 
-    // Fallback: Line-by-line parsing
+    // Fallback: line-by-line parsing
     const lines = raw.split("\n");
     const actions = [];
+    let currentDescription = "";
     for (const line of lines) {
       const trimmed = line.trim();
+      if (trimmed.startsWith("הסבר:")) {
+        currentDescription = trimmed.substring(4).trim();
+        continue;
+      }
+      // Parse Yemot API URL lines into local actions (path + key=value params)
+      if (/^https?:\/\//i.test(trimmed) && trimmed.includes("?")) {
+        try {
+          const url = new URL(trimmed);
+          const pathParam = url.searchParams.get("path") || "";
+          for (const [param, value] of url.searchParams.entries()) {
+            if (param === "path" || param === "token") continue;
+            actions.push({
+              path: pathParam,
+              key: param,
+              value: value,
+              description: currentDescription,
+              selected: true
+            });
+          }
+          currentDescription = "";
+        } catch (_) {}
+        continue;
+      }
       if (trimmed.includes("=") || trimmed.includes("->")) {
         actions.push({
           path: "",
@@ -235,12 +288,12 @@
   async function executeSelectedActions() {
     const selected = parsedActions.filter(a => a.selected);
     if (selected.length === 0) {
-      alert("לא נבחרו פעולות לביצוע");
+      alert(t("no_actions_selected"));
       return;
     }
 
     isLoading = true;
-    statusMessage = `מבצע ${selected.length} פעולות מול ימות המשיח...`;
+    statusMessage = t("executing_actions", { count: selected.length });
     let successCount = 0;
 
     for (const act of selected) {
@@ -258,7 +311,11 @@
     }
 
     isLoading = false;
-    statusMessage = `הסתיים! בוצעו ${successCount} מתוך ${selected.length} פעולות.`;
+    statusMessage = t("actions_done", { done: successCount, total: selected.length });
+    // Logout is performed locally — never via the script.
+    if (logoutOnFinish) {
+      await localLogout();
+    }
   }
 
   async function openKnowledgeFile(fileName) {
@@ -266,16 +323,175 @@
     try {
       selectedFileContent = await invoke("get_knowledge_file_content", { fileName });
     } catch (e) {
-      selectedFileContent = "שגיאה בטעינת הקובץ: " + e;
+      selectedFileContent = t("file_load_error", { error: e });
     }
   }
 
-  function setPreset(text) {
-    promptText = text;
+  function setPreset(promptKey) {
+    promptText = t(promptKey);
+  }
+
+  // ----- Token management (stored locally, deletable) -----
+
+  function clearToken() {
+    yemotToken = "";
+    tokenStatus = null;
+    try {
+      localStorage.removeItem("ai_yemot_token");
+    } catch (_) {}
+  }
+
+  // ----- Login (create token) flow: system number + password + MFA -----
+
+  function openLoginModal() {
+    loginUsername = "";
+    loginPassword = "";
+    loginToken = "";
+    loginStep = "credentials";
+    loginMethods = [];
+    loginMethodId = "";
+    loginSendType = "";
+    loginCode = "";
+    loginCodeSent = false;
+    loginStatus = "";
+    loginError = "";
+    loginLoading = false;
+    showLoginModal = true;
+  }
+
+  function closeLoginModal() {
+    showLoginModal = false;
+  }
+
+  function applyLoginToken(token) {
+    yemotToken = token;
+    try {
+      localStorage.setItem("ai_yemot_token", token);
+    } catch (_) {}
+    tokenStatus = { valid: true, message: t("login_success") };
+    closeLoginModal();
+  }
+
+  async function handleLogin() {
+    loginError = "";
+    if (!loginUsername.trim() || !loginPassword.trim()) {
+      loginError = t("enter_system_and_password");
+      return;
+    }
+    loginLoading = true;
+    loginStatus = t("login_btn") + "...";
+    try {
+      const res = await invoke("login_yemot", {
+        username: loginUsername.trim(),
+        password: loginPassword.trim()
+      });
+      if (res.success && res.token) {
+        loginToken = res.token;
+        if (!res.mfa_required) {
+          applyLoginToken(res.token);
+        } else {
+          await loadLoginMethods();
+        }
+      } else {
+        loginError = res.message;
+      }
+    } catch (e) {
+      loginError = t("comm_error", { error: e });
+    } finally {
+      loginLoading = false;
+      loginStatus = "";
+    }
+  }
+
+  async function loadLoginMethods() {
+    loginLoading = true;
+    try {
+      const res = await invoke("get_mfa_methods", { token: loginToken });
+      if (res.success && res.methods && res.methods.length > 0) {
+        loginMethods = res.methods;
+        loginMethodId = res.methods[0].id;
+        loginSendType = res.methods[0].send_types && res.methods[0].send_types[0] ? res.methods[0].send_types[0] : "";
+        loginStep = "mfa";
+        loginCodeSent = false;
+        loginCode = "";
+        loginStatus = "";
+      } else {
+        loginError = res.message || t("no_mfa_methods");
+      }
+    } catch (e) {
+      loginError = t("comm_error", { error: e });
+    } finally {
+      loginLoading = false;
+    }
+  }
+
+  async function handleSendLoginCode() {
+    loginError = "";
+    loginLoading = true;
+    loginStatus = t("sending_code");
+    try {
+      const res = await invoke("send_mfa_code", {
+        token: loginToken,
+        mfaId: loginMethodId,
+        sendType: loginSendType
+      });
+      if (res.success) {
+        loginCodeSent = true;
+        loginStatus = "";
+      } else {
+        loginError = res.message;
+      }
+    } catch (e) {
+      loginError = t("comm_error", { error: e });
+    } finally {
+      loginLoading = false;
+      loginStatus = "";
+    }
+  }
+
+  async function handleValidateLoginCode() {
+    loginError = "";
+    if (!loginCode.trim()) {
+      loginError = t("enter_mfa_code");
+      return;
+    }
+    loginLoading = true;
+    loginStatus = t("verifying_code");
+    try {
+      const res = await invoke("validate_mfa_code", {
+        token: loginToken,
+        code: loginCode.trim()
+      });
+      if (res.success) {
+        applyLoginToken(loginToken);
+      } else {
+        loginError = res.message;
+      }
+    } catch (e) {
+      loginError = t("comm_error", { error: e });
+    } finally {
+      loginLoading = false;
+      loginStatus = "";
+    }
+  }
+
+  // ----- Local logout (token is never invalidated via the script) -----
+
+  async function localLogout() {
+    if (!yemotToken.trim()) return;
+    try {
+      await invoke("logout_yemot", { token: yemotToken.trim() });
+    } catch (e) {
+      console.error("Logout failed:", e);
+    }
   }
 </script>
 
-<div class="min-h-screen bg-slate-50 text-slate-800 pb-12">
+<svelte:head>
+  <title>{t("app_title")}</title>
+</svelte:head>
+
+<div class="min-h-screen bg-slate-50 text-slate-800 pb-12" dir={rtl ? "rtl" : "ltr"}>
   <!-- Top Navigation Bar -->
   <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
     <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
@@ -285,17 +501,29 @@
         </div>
         <div>
           <h1 class="text-lg font-bold text-slate-900 leading-tight">AI yemot</h1>
-          <p class="text-xs text-slate-500">ניהול שלוחות חכם מקומפל (Tauri 2.0 + Rust)</p>
         </div>
       </div>
 
-      <div class="flex items-center space-x-3 space-x-reverse">
+      <div class="flex items-center gap-3">
+        <!-- Language selector -->
+        <select
+          value={i18n.locale}
+          onchange={(e) => setLocale(e.target.value)}
+          aria-label={t("language")}
+          title={t("language")}
+          class="text-xs rounded-lg border border-slate-300 bg-white p-1.5 focus:ring-2 focus:ring-blue-500 focus:outline-none cursor-pointer"
+        >
+          {#each availableLocales as loc}
+            <option value={loc.code}>{loc.flag} {loc.nativeName}</option>
+          {/each}
+        </select>
+
         <button
           type="button"
           onclick={() => showKnowledgeModal = true}
           class="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 flex items-center gap-1.5 transition"
         >
-          <span>📚 בסיס ידע מקומי</span>
+          <span>{t("knowledge_btn")}</span>
           <span class="bg-blue-100 text-blue-800 text-[10px] px-1.5 py-0.5 rounded-full font-bold">{knowledgeFiles.length}</span>
         </button>
 
@@ -305,7 +533,7 @@
             target="_blank"
             class="px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-300 text-xs font-semibold text-emerald-700 flex items-center gap-1 animate-pulse"
           >
-            <span>🚀 עדכון זמין: v{updateInfo.latest_version}</span>
+            <span>{t("update_available", { version: updateInfo.latest_version })}</span>
           </a>
         {/if}
       </div>
@@ -320,26 +548,26 @@
       <div class="lg:col-span-1 space-y-6">
         <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-5">
           <h2 class="text-sm font-bold text-slate-800 flex items-center gap-2 border-b pb-3">
-            <span>⚙️ הגדרות יעד וחיבור</span>
+            <span>{t("settings_title")}</span>
           </h2>
 
           <!-- Target Mode Selector -->
           <div>
-            <label class="block text-xs font-semibold text-slate-600 mb-2">אופן העיבוד (יעד)</label>
+            <label class="block text-xs font-semibold text-slate-600 mb-2">{t("target_mode")}</label>
             <div class="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl">
               <button
                 type="button"
                 onclick={() => targetMode = 'script'}
                 class="py-1.5 px-3 text-xs font-medium rounded-lg transition {targetMode === 'script' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-600 hover:text-slate-900'}"
               >
-                🌐 סקריפט (GAS)
+                {t("mode_script")}
               </button>
               <button
                 type="button"
                 onclick={() => targetMode = 'direct'}
                 class="py-1.5 px-3 text-xs font-medium rounded-lg transition {targetMode === 'direct' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-600 hover:text-slate-900'}"
               >
-                ⚡ ספק AI ישיר
+                {t("mode_direct")}
               </button>
             </div>
           </div>
@@ -347,29 +575,29 @@
           <!-- Provider selection if direct mode -->
           {#if targetMode === 'direct'}
             <div>
-              <label class="block text-xs font-semibold text-slate-600 mb-1.5">ספק AI ישיר</label>
+              <label class="block text-xs font-semibold text-slate-600 mb-1.5">{t("provider_label")}</label>
               <select
                 bind:value={aiProvider}
                 class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white"
               >
-                <option value="gemini">Google Gemini (מומלץ)</option>
-                <option value="openai">OpenAI (ChatGPT)</option>
-                <option value="groq">Groq (מהיר במיוחד)</option>
+                <option value="gemini">{t("provider_gemini")}</option>
+                <option value="openai">{t("provider_openai")}</option>
+                <option value="groq">{t("provider_groq")}</option>
               </select>
             </div>
           {/if}
 
           <!-- Model Type (Regular / Pro) -->
           <div>
-            <label class="block text-xs font-semibold text-slate-600 mb-1.5">מודל AI</label>
+            <label class="block text-xs font-semibold text-slate-600 mb-1.5">{t("model_label")}</label>
             <div class="space-y-1.5">
               <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
                 <input type="radio" bind:group={modelType} value="regular" class="text-blue-600 focus:ring-blue-500">
-                <span>מודל רגיל (מהיר, פחות מורכב)</span>
+                <span>{t("model_regular")}</span>
               </label>
               <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
                 <input type="radio" bind:group={modelType} value="pro" class="text-blue-600 focus:ring-blue-500">
-                <span>מודל Pro (מעמיק ומדויק ביותר)</span>
+                <span>{t("model_pro")}</span>
               </label>
             </div>
           </div>
@@ -377,28 +605,48 @@
           <!-- Yemot Token -->
           <div>
             <div class="flex items-center justify-between mb-1.5">
-              <label class="text-xs font-semibold text-slate-600">טוקן ימות המשיח</label>
-              <button
-                type="button"
-                onclick={() => showToken = !showToken}
-                class="text-[11px] text-blue-600 hover:underline"
-              >
-                {showToken ? 'הסתר' : 'הצג'}
-              </button>
+              <label class="text-xs font-semibold text-slate-600">{t("token_label")}</label>
+              <div class="flex items-center gap-2">
+                <button
+                  type="button"
+                  onclick={openLoginModal}
+                  class="text-[11px] text-blue-600 hover:underline"
+                >
+                  {t("get_token")}
+                </button>
+                {#if yemotToken}
+                  <button
+                    type="button"
+                    onclick={clearToken}
+                    title={t("clear_token")}
+                    aria-label={t("clear_token")}
+                    class="text-[11px] text-rose-500 hover:text-rose-700"
+                  >
+                    🗑 {t("clear_token")}
+                  </button>
+                {/if}
+                <button
+                  type="button"
+                  onclick={() => showToken = !showToken}
+                  class="text-[11px] text-blue-600 hover:underline"
+                >
+                  {showToken ? t("hide") : t("show")}
+                </button>
+              </div>
             </div>
             <div class="relative">
               <input
                 type={showToken ? "text" : "password"}
                 bind:value={yemotToken}
-                placeholder="הזן טוקן מערכת..."
-                class="w-full text-xs rounded-lg border border-slate-300 p-2 pr-2 pl-14 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                placeholder={t("token_placeholder")}
+                class="w-full text-xs rounded-lg border border-slate-300 p-2 {rtl ? 'pr-2 pl-14' : 'pl-2 pr-14'} focus:ring-2 focus:ring-blue-500 focus:outline-none"
               />
               <button
                 type="button"
                 onclick={checkToken}
-                class="absolute left-1 top-1 bottom-1 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-medium rounded-md transition"
+                class="absolute {rtl ? 'left-1' : 'right-1'} top-1 bottom-1 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-medium rounded-md transition"
               >
-                בדוק
+                {t("check")}
               </button>
             </div>
             {#if tokenStatus}
@@ -406,38 +654,36 @@
                 {tokenStatus.valid ? '✅ ' : '❌ '}{tokenStatus.message}
               </p>
             {/if}
+            <p class="text-[10px] text-slate-400 mt-1.5 leading-relaxed">🔒 {t("local_note")}</p>
           </div>
 
-          <!-- API Key Option -->
+          <!-- Personal API Key (no system key exists) -->
           <div class="border-t pt-4">
-            <label class="block text-xs font-semibold text-slate-600 mb-1.5">סוג מפתח AI</label>
-            <div class="space-y-2">
-              <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                <input type="radio" bind:group={apiType} value="system" class="text-blue-600">
-                <span>מפתח מערכת ברירת מחדל</span>
-              </label>
-              <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                <input type="radio" bind:group={apiType} value="private" class="text-blue-600">
-                <span>מפתח API אישי</span>
-              </label>
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="text-xs font-semibold text-slate-600">{t("api_key_label")}</label>
+              <button
+                type="button"
+                onclick={() => showApiKey = !showApiKey}
+                class="text-[11px] text-blue-600 hover:underline"
+              >
+                {showApiKey ? t("hide") : t("show")}
+              </button>
             </div>
-
-            {#if apiType === 'private'}
-              <div class="mt-2.5">
-                <input
-                  type={showApiKey ? "text" : "password"}
-                  bind:value={apiKey}
-                  placeholder="הזן מפתח API..."
-                  class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                />
-              </div>
-            {/if}
+            <input
+              type={showApiKey ? "text" : "password"}
+              bind:value={apiKey}
+              placeholder={t("api_key_placeholder")}
+              class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            />
+            <p class="text-[10px] text-slate-400 mt-1.5">
+              {targetMode === 'direct' ? t("api_key_hint_direct") : t("api_key_hint_script")}
+            </p>
           </div>
 
           <!-- Script URL if in script mode -->
           {#if targetMode === 'script'}
             <div class="border-t pt-4">
-              <label class="block text-xs font-semibold text-slate-600 mb-1">כתובת סקריפט מותאמת (GAS)</label>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">{t("script_url_label")}</label>
               <input
                 type="text"
                 bind:value={scriptUrl}
@@ -450,11 +696,11 @@
           <div class="border-t pt-4 space-y-2">
             <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
               <input type="checkbox" bind:checked={isPreviewMode} class="rounded text-blue-600 focus:ring-blue-500">
-              <span class="font-medium">תצוגה מקדימה ואישור פעולות (מומלץ)</span>
+              <span class="font-medium">{t("preview_mode")}</span>
             </label>
             <label class="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
               <input type="checkbox" bind:checked={logoutOnFinish} class="rounded text-blue-600 focus:ring-blue-500">
-              <span>התנתק מהמערכת בסיום (Logout)</span>
+              <span>{t("logout_on_finish")}</span>
             </label>
           </div>
         </div>
@@ -467,41 +713,41 @@
           <form onsubmit={handleSubmit} class="space-y-4">
             <div>
               <div class="flex items-center justify-between mb-2">
-                <label for="prompt-textarea" class="text-sm font-bold text-slate-800">הנחיות לעדכון שלוחה במערכת</label>
-                <span class="text-xs text-slate-400">תאר בעברית חופשית</span>
+                <label for="prompt-textarea" class="text-sm font-bold text-slate-800">{t("prompt_label")}</label>
+                <span class="text-xs text-slate-400">{t("prompt_hint")}</span>
               </div>
               <textarea
                 id="prompt-textarea"
                 rows="5"
                 bind:value={promptText}
-                placeholder="לדוגמה: הגדר שלוחה 1 כתפריט שמשמיע קובץ פתיח 000 ומאפשר להקיש 1 להשמעת שיעורים ו-2 לשליחת שיחה למנהל..."
+                placeholder={t("prompt_placeholder")}
                 class="w-full rounded-xl border border-slate-300 p-3.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none leading-relaxed resize-y"
               ></textarea>
             </div>
 
             <!-- Quick Presets -->
             <div class="flex flex-wrap gap-2 pt-1">
-              <span class="text-xs text-slate-400 self-center">הצעות מהירות:</span>
+              <span class="text-xs text-slate-400 self-center">{t("quick_presets")}</span>
               <button
                 type="button"
-                onclick={() => setPreset("הגדר שלוחה 1 כתפריט בחירה ראשי עם מעבר לשלוחות 1, 2 ו-3")}
+                onclick={() => setPreset("preset_menu_prompt")}
                 class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1 rounded-lg transition"
               >
-                תפריט בחירה
+                {t("preset_menu")}
               </button>
               <button
                 type="button"
-                onclick={() => setPreset("הגדר שלוחה 2 להשמעת קבצים עם אפשרות דילוג וחזרה")}
+                onclick={() => setPreset("preset_play_prompt")}
                 class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1 rounded-lg transition"
               >
-                השמעת קבצים
+                {t("preset_play")}
               </button>
               <button
                 type="button"
-                onclick={() => setPreset("הגדר שלוחה 3 לקבלת נתונים והקלטה מהמאזין עם שליחה למייל")}
+                onclick={() => setPreset("preset_record_prompt")}
                 class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1 rounded-lg transition"
               >
-                קבלת הקלטה
+                {t("preset_record")}
               </button>
             </div>
 
@@ -527,9 +773,9 @@
               >
                 {#if isLoading}
                   <span class="animate-spin">⏳</span>
-                  <span>מעבד בקשה...</span>
+                  <span>{t("processing")}</span>
                 {:else}
-                  <span>שגר עדכון לשלוחה 🚀</span>
+                  <span>{t("submit")}</span>
                 {/if}
               </button>
             </div>
@@ -541,8 +787,8 @@
           <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
             <div class="flex items-center justify-between border-b pb-3">
               <div>
-                <h3 class="text-sm font-bold text-slate-800">📋 תצוגה מקדימה של הפעולות המוצעות</h3>
-                <p class="text-xs text-slate-500">סמן את הפעולות שברצונך לאשר ולבצע בפועל</p>
+                <h3 class="text-sm font-bold text-slate-800">{t("preview_title")}</h3>
+                <p class="text-xs text-slate-500">{t("preview_hint")}</p>
               </div>
               <button
                 type="button"
@@ -550,7 +796,7 @@
                 disabled={isLoading}
                 class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow transition disabled:opacity-50"
               >
-                בצע פעולות מסומנות ✨
+                {t("execute_selected")}
               </button>
             </div>
 
@@ -586,13 +832,26 @@
         <!-- Raw Result Output (If no parsed actions or in addition) -->
         {#if resultOutput}
           <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-3">
-            <h3 class="text-xs font-bold text-slate-700">תשובת המערכת:</h3>
+            <h3 class="text-xs font-bold text-slate-700">{t("raw_output_title")}</h3>
             <pre class="bg-slate-900 text-slate-100 p-4 rounded-xl text-xs font-mono whitespace-pre-wrap overflow-x-auto max-h-80">{resultOutput}</pre>
           </div>
         {/if}
       </div>
     </div>
   </main>
+
+  <!-- Footer credit -->
+  <footer class="max-w-6xl mx-auto px-4 py-6 flex justify-center">
+    <a
+      href="https://bot-phone.netlify.app/"
+      target="_blank"
+      rel="noopener noreferrer"
+      class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white border border-slate-200 shadow-sm text-xs font-medium text-slate-600 hover:text-blue-600 hover:border-blue-300 transition"
+    >
+      <span class="text-base" aria-hidden="true">🤖</span>
+      <span>{t("footer_credit")}</span>
+    </a>
+  </footer>
 
   <!-- Knowledge Explorer Modal -->
   {#if showKnowledgeModal}
@@ -601,7 +860,7 @@
         <div class="p-4 border-b flex items-center justify-between bg-slate-50">
           <div class="flex items-center gap-2">
             <span class="text-xl">📚</span>
-            <h3 class="font-bold text-sm text-slate-800">בסיס ידע מוטמע ({knowledgeFiles.length} קבצים בזיכרון)</h3>
+            <h3 class="font-bold text-sm text-slate-800">{t("knowledge_modal_title", { count: knowledgeFiles.length })}</h3>
           </div>
           <button
             type="button"
@@ -614,11 +873,11 @@
 
         <div class="grid grid-cols-1 md:grid-cols-3 flex-1 overflow-hidden">
           <!-- File List -->
-          <div class="p-3 border-l border-slate-200 overflow-y-auto max-h-[70vh]">
+          <div class="p-3 {rtl ? 'border-l' : 'border-r'} border-slate-200 overflow-y-auto max-h-[70vh]">
             <input
               type="text"
               bind:value={searchQuery}
-              placeholder="חיפוש קובץ ידע..."
+              placeholder={t("search_knowledge")}
               class="w-full text-xs rounded-lg border border-slate-300 p-2 mb-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
             />
             <div class="space-y-1">
@@ -626,7 +885,7 @@
                 <button
                   type="button"
                   onclick={() => openKnowledgeFile(file.name)}
-                  class="w-full text-right p-2 text-xs rounded-lg hover:bg-blue-50 hover:text-blue-700 transition flex items-center justify-between {selectedFileName === file.name ? 'bg-blue-100 font-bold text-blue-800' : 'text-slate-700'}"
+                  class="w-full {rtl ? 'text-right' : 'text-left'} p-2 text-xs rounded-lg hover:bg-blue-50 hover:text-blue-700 transition flex items-center justify-between {selectedFileName === file.name ? 'bg-blue-100 font-bold text-blue-800' : 'text-slate-700'}"
                 >
                   <span class="truncate">{file.name.replace('.txt', '')}</span>
                   <span class="text-[10px] text-slate-400">{(file.size / 1024).toFixed(1)}k</span>
@@ -642,7 +901,7 @@
               <pre class="text-xs text-slate-700 font-sans whitespace-pre-wrap leading-relaxed">{selectedFileContent}</pre>
             {:else}
               <div class="h-full flex items-center justify-center text-slate-400 text-xs">
-                בחר קובץ מהרשימה לצפייה בתיעוד
+                {t("select_file_hint")}
               </div>
             {/if}
           </div>
@@ -658,7 +917,7 @@
         <div class="flex items-center justify-between border-b pb-3">
           <h3 class="font-bold text-sm text-slate-800 flex items-center gap-2">
             <span>🔐</span>
-            <span>אימות דו-שלבי (MFA) נדרש</span>
+            <span>{t("mfa_modal_title")}</span>
           </h3>
           <button
             type="button"
@@ -670,17 +929,17 @@
         </div>
 
         <p class="text-xs text-slate-600 leading-relaxed">
-          מערכת ימות המשיח דורשת אימות טלפוני לפני ביצוע שינויים. בחר אופן קבלת הקוד:
+          {t("mfa_modal_desc")}
         </p>
 
         <div class="flex gap-4 text-xs text-slate-700">
           <label class="flex items-center gap-1.5 cursor-pointer">
             <input type="radio" bind:group={mfaMethod} value="call" class="text-blue-600">
-            <span>שיחה קולית</span>
+            <span>{t("mfa_call")}</span>
           </label>
           <label class="flex items-center gap-1.5 cursor-pointer">
             <input type="radio" bind:group={mfaMethod} value="sms" class="text-blue-600">
-            <span>מסרון (SMS)</span>
+            <span>{t("mfa_sms")}</span>
           </label>
         </div>
 
@@ -689,16 +948,16 @@
           onclick={requestMfa}
           class="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-lg transition"
         >
-          שלח קוד אימות 📞
+          {t("mfa_send_code")}
         </button>
 
         <div class="pt-2">
-          <label for="mfa-code-input" class="block text-xs font-semibold text-slate-600 mb-1">הזן את הקוד שהתקבל:</label>
+          <label for="mfa-code-input" class="block text-xs font-semibold text-slate-600 mb-1">{t("mfa_code_label")}</label>
           <input
             id="mfa-code-input"
             type="text"
             bind:value={mfaCode}
-            placeholder="קוד בן 4-6 ספרות"
+            placeholder={t("mfa_code_placeholder")}
             class="w-full text-center text-sm font-mono tracking-widest rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
           />
         </div>
@@ -713,16 +972,138 @@
             onclick={() => showMfaModal = false}
             class="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition"
           >
-            ביטול
+            {t("cancel")}
           </button>
           <button
             type="button"
             onclick={verifyMfa}
             class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg shadow transition"
           >
-            אמת והמשך ✓
+            {t("mfa_verify")}
           </button>
         </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Login (create token) Modal -->
+  {#if showLoginModal}
+    <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+      <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+        <div class="flex items-center justify-between border-b pb-3">
+          <h3 class="font-bold text-sm text-slate-800 flex items-center gap-2">
+            <span>🔑</span>
+            <span>{t("login_title")}</span>
+          </h3>
+          <button
+            type="button"
+            onclick={closeLoginModal}
+            class="text-slate-400 hover:text-slate-600"
+          >
+            ✕
+          </button>
+        </div>
+
+        {#if loginStep === "credentials"}
+          <div>
+            <label for="login-username" class="block text-xs font-semibold text-slate-600 mb-1">{t("system_number")}</label>
+            <input
+              id="login-username"
+              type="text"
+              dir="ltr"
+              bind:value={loginUsername}
+              placeholder={t("system_number_placeholder")}
+              class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <label for="login-password" class="text-xs font-semibold text-slate-600">{t("password")}</label>
+              <button
+                type="button"
+                onclick={() => loginShowPassword = !loginShowPassword}
+                class="text-[11px] text-blue-600 hover:underline"
+              >
+                {loginShowPassword ? t("hide") : t("show")}
+              </button>
+            </div>
+            <input
+              id="login-password"
+              type={loginShowPassword ? "text" : "password"}
+              dir="ltr"
+              bind:value={loginPassword}
+              placeholder={t("password_placeholder")}
+              class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            />
+          </div>
+
+          <button
+            type="button"
+            onclick={handleLogin}
+            disabled={loginLoading}
+            class="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg shadow transition disabled:opacity-50"
+          >
+            {t("login_btn")}
+          </button>
+        {:else}
+          <div>
+            <label for="login-mfa-method" class="block text-xs font-semibold text-slate-600 mb-1">{t("mfa_methods")}</label>
+            <select
+              id="login-mfa-method"
+              bind:value={loginMethodId}
+              onchange={(e) => {
+                const m = loginMethods.find((mm) => mm.id === e.target.value);
+                loginSendType = m && m.send_types && m.send_types[0] ? m.send_types[0] : "";
+                loginCodeSent = false;
+              }}
+              class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white"
+            >
+              {#each loginMethods as m}
+                <option value={m.id}>{m.label}</option>
+              {/each}
+            </select>
+          </div>
+
+          <button
+            type="button"
+            onclick={handleSendLoginCode}
+            disabled={loginLoading}
+            class="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-lg transition disabled:opacity-50"
+          >
+            📞 {t("send_code")}
+          </button>
+
+          {#if loginCodeSent}
+            <div class="pt-2">
+              <label for="login-mfa-code" class="block text-xs font-semibold text-slate-600 mb-1">{t("code_sent")}</label>
+              <input
+                id="login-mfa-code"
+                type="text"
+                dir="ltr"
+                bind:value={loginCode}
+                placeholder={t("mfa_code_placeholder")}
+                class="w-full text-center text-sm font-mono tracking-widest rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              />
+            </div>
+
+            <button
+              type="button"
+              onclick={handleValidateLoginCode}
+              disabled={loginLoading}
+              class="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg shadow transition disabled:opacity-50"
+            >
+              {t("validate_code")}
+            </button>
+          {/if}
+        {/if}
+
+        {#if loginStatus}
+          <p class="text-xs text-blue-700 font-medium">{loginStatus}</p>
+        {/if}
+        {#if loginError}
+          <p class="text-xs text-rose-600 font-medium">❌ {loginError}</p>
+        {/if}
       </div>
     </div>
   {/if}

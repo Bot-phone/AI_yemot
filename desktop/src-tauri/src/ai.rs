@@ -6,9 +6,8 @@ pub struct AIRequestPayload {
     pub provider: String,    // "gemini", "openai", "claude", "groq"
     pub model: String,       // "regular", "pro", or model ID
     pub prompt: String,      // User instruction
-    pub token: String,       // Yemot token
-    pub api_key: String,     // Gemini / Provider API key
-    pub api_type: String,    // "private" or "system" (2411)
+    pub token: String,       // Yemot token — NEVER sent to any external script/AI
+    pub api_key: String,     // Gemini / Provider API key (personal)
     pub is_preview: bool,    // Preview / FullAnswer
     pub logout: bool,        // Invalidate token after run
     pub script_url: String,  // Google Apps Script or Webhook URL
@@ -41,21 +40,21 @@ async fn send_to_script(payload: AIRequestPayload) -> Result<AIResponsePayload, 
         .build()
         .map_err(|e| format!("שגיאת יצירת לקוח רשת: {}", e))?;
 
+    // SECURITY: the Yemot token is never sent to the script — only the AI
+    // prompt (and optional personal API key) leave this machine. All Yemot
+    // actions are executed locally by this app (execute_yemot_action).
     let mut query_params: Vec<(&str, String)> = Vec::new();
-    query_params.push(("token", payload.token.clone()));
     query_params.push(("text", payload.prompt.clone()));
 
     if payload.model.to_lowercase() == "pro" {
         query_params.push(("model", "pro".to_string()));
     }
 
-    if payload.api_type == "private" && !payload.api_key.trim().is_empty() {
+    if !payload.api_key.trim().is_empty() {
         query_params.push(("key", payload.api_key.clone()));
     }
 
-    if payload.logout {
-        query_params.push(("Logout", "yes".to_string()));
-    }
+    // Logout is handled locally (logout_yemot command), never by the script.
 
     if payload.is_preview {
         query_params.push(("Fullanswer", "yes".to_string()));
@@ -96,13 +95,11 @@ async fn send_to_direct_ai(payload: AIRequestPayload) -> Result<AIResponsePayloa
 }
 
 async fn send_to_gemini(payload: AIRequestPayload) -> Result<AIResponsePayload, String> {
-    let effective_key = if payload.api_type == "system" {
-        "2411".to_string()
-    } else if !payload.api_key.trim().is_empty() {
-        payload.api_key.clone()
-    } else {
-        return Err("נדרש מפתח Gemini API לצורך פנייה ישירה".to_string());
-    };
+    // Direct mode: there is no system key at all — a personal API key is required.
+    let effective_key = payload.api_key.trim().to_string();
+    if effective_key.is_empty() {
+        return Err("נדרש מפתח API אישי לצורך פנייה ישירה לספק ה-AI".to_string());
+    }
 
     let model_name = match payload.model.to_lowercase().as_str() {
         "pro" => "gemini-2.5-pro",

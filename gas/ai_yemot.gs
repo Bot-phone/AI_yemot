@@ -95,22 +95,24 @@ function handleRequest(params) {
   }
 
   try {
-    // בדיקת חובת טוקן ואימות MFA מול ימות המשיח
-    if (!token || token.trim() === "") {
-      logMessages.push("FATAL: 'token' parameter is missing or empty.");
-      Logger.log("FATAL: Token missing.");
-      return ContentService.createTextOutput("שגיאה: חובה לספק טוקן תקין (token) לכל בקשה.");
-    }
+    // בדיקת טוקן ואימות MFA מול ימות המשיח — הטוקן אינו חובה יותר:
+    // האפליקציה המקומית אינה שולחת טוקן לסקריפט מטעמי אבטחה, וכל הפעולות
+    // מול ימות מתבצעות אצל הלקוח באופן מקומי. הסקריפט משמש רק לתקשורת עם ה-AI.
+    let tokenIsValid = false;
+    if (token && token.trim() !== "") {
+      logMessages.push("Attempting token validity check using MFASession?action=isPass...");
+      const tokenCheckResult = checkTokenValidity(token);
 
-    logMessages.push("Attempting token validity check using MFASession?action=isPass...");
-    const tokenCheckResult = checkTokenValidity(token);
-
-    if (!tokenCheckResult.isValid) {
-      logMessages.push("FATAL: Token check failed. Message: " + tokenCheckResult.message);
-      Logger.log("FATAL: Token check failed. Message: " + tokenCheckResult.message);
-      return ContentService.createTextOutput("שגיאה: הטוקן שסופק לא תקין או לא עבר אימות דו-שלבי");
+      if (!tokenCheckResult.isValid) {
+        logMessages.push("FATAL: Token check failed. Message: " + tokenCheckResult.message);
+        Logger.log("FATAL: Token check failed. Message: " + tokenCheckResult.message);
+        return ContentService.createTextOutput("שגיאה: הטוקן שסופק לא תקין או לא עבר אימות דו-שלבי");
+      }
+      tokenIsValid = true;
+      logMessages.push("Token check passed (MFA isPass: true).");
+    } else {
+      logMessages.push("No token provided — AI-only mode (all Yemot actions are executed locally by the client).");
     }
-    logMessages.push("Token check passed (MFA isPass: true).");
 
     // בדיקת הגדרות מערכת
     if (!GOOGLE_CLOUD_API_KEY || !DRIVE_FOLDER_ID ||
@@ -185,6 +187,13 @@ function handleRequest(params) {
     // אם הפרמטר Fullanswer=Yes, החזרת התשובה ללא ביצוע קישורי ה-API
     if (fullAnswer && String(fullAnswer).toLowerCase() === 'yes') {
       logMessages.push("Fullanswer=Yes detected. Returning raw Gemini response without execution.");
+      return ContentService.createTextOutput(geminiResponseText);
+    }
+
+    // ללא טוקן תקין אין אפשרות לבצע פעולות מול ימות מהסקריפט —
+    // מחזירים את התשובה הגולמית והלקוח מבצע את הפעולות באופן מקומי.
+    if (!tokenIsValid) {
+      logMessages.push("No valid token — returning raw AI response for local execution by the client.");
       return ContentService.createTextOutput(geminiResponseText);
     }
 
@@ -493,7 +502,14 @@ function callGemini(userText, modelName, knowledgeFileList, geminiApiKey, driveF
     ? "רשימת קבצי ידע זמינים לעיונך:\n" + knowledgeFileList.join('\n')
     : "אין קבצי ידע דינמיים זמינים.";
 
-  const systemInstructions = `${systemInstructions}`;
+  // הנחיות מערכת למודל: פלט פעולות כשורות URL (ללא token) עם שורות הסבר
+  const systemInstructions =
+    "אתה עוזר AI מקצועי להגדרת שלוחות במערכות ימות המשיח (IVR). ענה בעברית ברורה ומדויקת. " +
+    "השתמש בכלים הזמינים (קבצי ידע וקבצי INI) כדי לתת הגדרות מדויקות. " +
+    "אם המשתמש ביקש עדכון הגדרות שלוחה, פלט עבור כל פעולה שורת הסבר ואחריה שורת URL לביצוע, בפורמט:\n" +
+    "הסבר: <תיאור קצר של הפעולה>\n" +
+    "https://www.call2all.co.il/ym/api/UpdateExtension?path=ivr2:/<שלוחה>&<param>=<value>&<param2>=<value2>\n" +
+    "אין לכלול token ב-URL. הוסף שורת 'הבהרה:' להערות חשובות למשתמש. אם חסר מידע חיוני, שאל שאלת הבהרה.";
 
   const history = [
     {
