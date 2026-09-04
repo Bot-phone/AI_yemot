@@ -10,14 +10,16 @@ import os
 import sys
 import json
 import time
+import re
 import html
 import argparse
 import urllib.request
 import urllib.parse
 from pathlib import Path
 
-# ייבוא מודול הניקוי
+# ייבוא מודולי ניקוי וסיווג פוסטים
 from cleaner import clean_html_content
+from post_classifier import classify_post
 
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
@@ -26,19 +28,25 @@ if hasattr(sys.stdout, 'reconfigure'):
 BASE_FORUM_URL = "https://f2.freeivr.co.il"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-def fetch_json(url: str, timeout: int = 30) -> dict:
-    """ביצוע קריאת GET והחזרת JSON עם מנגנון ניסיונות חוזרים"""
+def fetch_json(url: str, timeout: int = 30, max_retries: int = 3) -> dict:
+    """ביצוע קריאת GET עם 3 ניסיונות חוזרים במקרי כשל, כולל השהייה מדורגת"""
     headers = {"User-Agent": USER_AGENT}
-    for attempt in range(3):
+    for attempt in range(max_retries):
         try:
             req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 data = resp.read().decode("utf-8")
                 return json.loads(data)
-        except Exception as e:
-            if attempt == 2:
+        except urllib.error.HTTPError as e:
+            print(f"[!] שגיאת HTTP {e.code} בפנייה ל-{url} (ניסיון {attempt + 1}/{max_retries})")
+            if attempt == max_retries - 1:
                 raise
-            time.sleep(1.5 * (attempt + 1))
+            time.sleep(2 * (attempt + 1))
+        except Exception as e:
+            print(f"[!] כשל ברשת בפנייה ל-{url}: {e} (ניסיון {attempt + 1}/{max_retries})")
+            if attempt == max_retries - 1:
+                raise
+            time.sleep(2 * (attempt + 1))
     return {}
 
 def post_json(url: str, payload: dict, timeout: int = 30) -> dict:
@@ -97,41 +105,17 @@ def get_topic_all_posts(tid: int) -> list:
         time.sleep(0.2)
     return posts
 
-def filter_and_clean_posts(posts: list, post_filter: dict, topic_author: str) -> list:
-    """סינון פוסטים וניקוי תוכן לפי כללי הסינון של הנושא"""
-    mode = post_filter.get("mode", "author_only")
-    allowed_authors = set(post_filter.get("authors", []))
-    if topic_author:
-        allowed_authors.add(topic_author)
-    
-    exclude_pids = set(post_filter.get("exclude_pids", []))
-    include_pids = set(post_filter.get("include_pids", []))
-    min_length = post_filter.get("min_length", 20)
-
+def filter_and_clean_posts(posts: list, post_filter: dict, topic_author: str = "") -> list:
+    """סינון פוסטים וניקוי תוכן לפי ניתוח תוכן הפוסט ללא תלות בזהות הכותב"""
     cleaned_texts = []
     for p in posts:
         pid = p.get("pid")
-        if pid in exclude_pids:
-            continue
-
         raw_content = p.get("content", "")
-        author = p.get("user", {}).get("username", "")
-
-        # בדיקת אישור פוסט
-        accept = False
-        if pid in include_pids:
-            accept = True
-        elif mode == "all":
-            accept = True
-        elif mode == "author_only":
-            if author in allowed_authors:
-                accept = True
-
-        if not accept:
-            continue
-
         cleaned = clean_html_content(raw_content)
-        if len(cleaned) >= min_length:
+
+        # הכרעה עבור כל פוסט בנפרד לפי תוכנו (האם מדובר בתיעוד טכני או שאלות/דיונים/ספאם)
+        include, reason = classify_post(raw_content, cleaned, pid=pid, post_filter=post_filter)
+        if include:
             cleaned_texts.append(cleaned)
 
     return cleaned_texts
@@ -243,8 +227,12 @@ def main():
     unchanged_count = 0
     created_count = 0
 
-    for filename, topic_items in file_to_topics.items():
-        file_path = output_dir / filename
+    for raw_filename, topic_items in file_to_topics.items():
+        clean_filename = re.sub(r'[<>:"/\\|?*]', '', raw_filename).strip()
+        if not clean_filename.endswith('.txt'):
+            clean_filename += '.txt'
+        file_path = output_dir / clean_filename
+        filename = clean_filename
         
         # איסוף התוכן מכל הנושאים המיועדים לקובץ זה
         file_sections = []

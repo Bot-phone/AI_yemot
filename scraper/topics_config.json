@@ -1523,7 +1523,7 @@
     "tid": 4005,
     "title": "playfile_and_enter_digits_time - קליקרים  + שידור חי רציף מדומה מרובה קבצים",
     "action": "file",
-    "target_file": "playfile_and_enter_digits_time - קליקרים  + שידור חי רציף מדומה מרובה קבצים.txt",
+    "target_file": "playfile_and_enter_digits_time - קליקרים + שידור חי רציף מדומה מרובה קבצים.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -1618,7 +1618,7 @@
     "tid": 8470,
     "title": "בדיקת הרשאת כניסה מול API  כמודול או כהטמעה בכל מודול",
     "action": "file",
-    "target_file": "בדיקת הרשאת כניסה מול API  כמודול או כהטמעה בכל מודול.txt",
+    "target_file": "בדיקת הרשאת כניסה מול API כמודול או כהטמעה בכל מודול.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [
@@ -2378,7 +2378,7 @@
     "tid": 98,
     "title": "רשימת השלוחות שאפשר להגדיר גם ע\"י הטלפון",
     "action": "file",
-    "target_file": "רשימת השלוחות שאפשר להגדיר ע\"י הטלפון.txt",
+    "target_file": "רשימת השלוחות שאפשר להגדיר עי הטלפון.txt",
     "post_filter": {
       "mode": "author_only",
       "authors": [

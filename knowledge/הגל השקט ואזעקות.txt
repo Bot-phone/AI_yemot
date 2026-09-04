@@ -1,9 +1,11 @@
 הגל השקט לאזעקות ברחבי הארץ כולל צבע אדום:
 
 type=oref_alerts_quiet_wave
+
 ברירת מחדל, משמיע כל 15 שניות בערך ביפ על מנת לתת חיווי למאזין, ניתן לבטל את זה ויהיה שקט לגמרי:
 
 oref_check_quiet_wave_no_play_beep=yes
+
 היסטוריית אזעקות:
 
 type=oref_alerts
