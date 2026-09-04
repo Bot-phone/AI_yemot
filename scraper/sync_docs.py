@@ -18,7 +18,7 @@ import urllib.parse
 from pathlib import Path
 
 # ייבוא מודולי ניקוי וסיווג פוסטים
-from cleaner import clean_html_content, extract_post_heading, make_slug
+from cleaner import clean_html_content, extract_post_heading, make_slug, postprocess_knowledge_text
 from post_classifier import classify_post
 
 if hasattr(sys.stdout, 'reconfigure'):
@@ -436,6 +436,8 @@ def main():
             continue
 
         new_content = "\n\n".join(file_sections).strip() + "\n"
+        # ניקוי-על אידמפוטנטי (זהה ל-scraper/postprocess.py) כדי שהקורפוס יישאר נקי
+        new_content = postprocess_knowledge_text(new_content, clean_filename)
 
         if file_path.exists():
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:

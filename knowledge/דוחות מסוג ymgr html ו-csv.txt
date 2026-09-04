@@ -1,5 +1,5 @@
 # דוחות מסוג ymgr html ו-csv
-<a id="דוחות-מסוג-ymgr-html-ו-csv"></a><a id="topic-8320"></a><a id="post-78987"></a>
+<a id="דוחות-מסוג-ymgr-html-ו-csv"></a>
 
 #### **הסבר**
 

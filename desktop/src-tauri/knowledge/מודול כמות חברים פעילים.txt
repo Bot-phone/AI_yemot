@@ -1,5 +1,5 @@
 # מודול כמות חברים פעילים members_active
-<a id="מודול-כמות-חברים-פעילים-members_active"></a><a id="topic-108"></a><a id="post-139"></a>
+<a id="מודול-כמות-חברים-פעילים-members_active"></a>
 
 מודול כמות חברים פעילים
 

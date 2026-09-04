@@ -1,5 +1,5 @@
 # רשימת השלוחות שאפשר להגדיר גם ע"י הטלפון
-<a id="רשימת-השלוחות-שאפשר-להגדיר-גם-ע-י-הטלפון"></a><a id="topic-98"></a><a id="post-129"></a>
+<a id="רשימת-השלוחות-שאפשר-להגדיר-גם-ע-י-הטלפון"></a>
 
 ### להלן רשימת השלוחות שאפשר להגדיר גם ע"י הטלפון
 
@@ -63,7 +63,7 @@ type=routing_yemot
 type=points_say_total
 ```
 
-**009** [חזרה למיקום אחרון בו האזינו במערכת](https://xn--9dbayzv.xn--8dbbhfc1ac2gg.co.il/topic/95/%D7%94%D7%A9%D7%9E%D7%A2%D7%AA-%D7%9E%D7%99%D7%A7%D7%95%D7%9D-%D7%94%D7%90%D7%96%D7%A0%D7%94-%D7%90%D7%97%D7%A8%D7%95%D7%A0%D7%94-%D7%9C%D7%A4%D7%A0%D7%99-%D7%94%D7%9E%D7%A2%D7%91%D7%A8-%D7%9C%D7%94%D7%90%D7%96%D7%A0%D7%94-%D7%9B%D7%9E%D7%95-%D7%A9%D7%94%D7%99%D7%94-%D7%91ivr1)
+**009** [חזרה למיקום אחרון בו האזינו במערכת](https://xn--9dbayzv.xn--8dbbhfc1ac2gg.co.il/topic/95/השמעת-מיקום-האזנה-אחרונה-לפני-המעבר-להאזנה-כמו-שהיה-בivr1)
 
 ```ini
 type=last_play
@@ -171,7 +171,7 @@ type=say_hour_and_minute
 type=approval_number
 ```
 
-**035** [קבלת הקלטות ונתונים](https://xn--9dbayzv.xn--8dbbhfc1ac2gg.co.il/topic/51/%D7%A7%D7%91%D7%9C%D7%AA-%D7%94%D7%A7%D7%9C%D7%98%D7%95%D7%AA-%D7%95%D7%A0%D7%AA%D7%95%D7%A0%D7%99%D7%9D-recording_and_entering_data)
+**035** [קבלת הקלטות ונתונים](https://xn--9dbayzv.xn--8dbbhfc1ac2gg.co.il/topic/51/קבלת-הקלטות-ונתונים-recording_and_entering_data)
 
 ```ini
 type=recording_and_entering_data
