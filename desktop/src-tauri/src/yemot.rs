@@ -1,6 +1,883 @@
+//! Yemot HaMashiach API client.
+//!
+//! Everything goes through one shared `reqwest::Client` and one
+//! [`YemotClient`], which holds the session token privately (it is sent in the
+//! `authorization` header, never logged, never returned to the frontend or to
+//! the model) and caches `ext.ini` reads for a short while.
+#![allow(dead_code)]
+
+use crate::yemot_ini::{ExtIni, IniLine};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Map, Value};
+use std::collections::HashMap;
+use std::fmt;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
 
 const YEMOT_API_BASE: &str = "https://www.call2all.co.il/ym/api/";
+const CACHE_TTL: Duration = Duration::from_secs(5 * 60);
+const MAX_CHILD_REQUESTS: usize = 25;
+const MAX_TREE_LINES: usize = 60;
+const DEFAULT_MAX_BYTES: usize = 8192;
+const NOTE_UNVERIFIED: &str = "לא ניתן היה לאמת את השינוי (הקריאה החוזרת נכשלה)";
+
+/// Extensions we refuse to read as text (audio / binary).
+const BINARY_EXTS: &[&str] = &[
+    "wav", "mp3", "wma", "gsm", "ogg", "opus", "m4a", "aac", "amr", "zip", "rar", "gz", "png",
+    "jpg", "jpeg", "gif", "bmp", "pdf", "exe", "dll", "bin",
+];
+
+// ---------------------------------------------------------------------------
+// Shared HTTP client
+// ---------------------------------------------------------------------------
+
+static HTTP: OnceLock<reqwest::Client> = OnceLock::new();
+
+/// The one and only HTTP client used by this module.
+pub fn http() -> &'static reqwest::Client {
+    HTTP.get_or_init(|| {
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(8))
+            .timeout(Duration::from_secs(20))
+            .user_agent("AI-Yemot-Desktop")
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum YemotError {
+    /// Session exists but has not passed two-factor verification.
+    MfaRequired,
+    /// Token invalid / expired / not logged in.
+    SessionExpired(String),
+    /// `responseStatus=FORBIDDEN`.
+    Forbidden(String),
+    /// Rejected locally (bad path, bad value) or malformed server reply.
+    BadRequest(String),
+    /// `responseStatus=ERROR` / `EXCEPTION`.
+    Api { code: Option<i64>, message: String },
+    /// Transport-level failure — the request may or may not have been applied.
+    Network(String),
+}
+
+impl fmt::Display for YemotError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&render_error(self))
+    }
+}
+
+impl std::error::Error for YemotError {}
+
+/// Model-facing one-line rendering of an error, with a stable code prefix.
+pub fn render_error(err: &YemotError) -> String {
+    match err {
+        YemotError::MfaRequired => "SESSION_EXPIRED: נדרש אימות דו-שלבי (MFA_REQUIRED). \
+             Stop and wait — do not retry."
+            .to_string(),
+        YemotError::SessionExpired(m) => {
+            format!("SESSION_EXPIRED: {} Stop and wait — do not retry.", m)
+        }
+        YemotError::Forbidden(m) => format!("FORBIDDEN: {}", m),
+        YemotError::BadRequest(m) => format!("BAD_REQUEST: {}", m),
+        YemotError::Api { code, message } => {
+            let code = code.map(|c| c.to_string()).unwrap_or_else(|| "-".to_string());
+            format!("ERROR[{}]: {}", code, message)
+        }
+        YemotError::Network(m) => format!(
+            "NETWORK_ERROR: {} — the request may or may not have been applied; \
+             read the extension config to verify before retrying.",
+            m
+        ),
+    }
+}
+
+fn is_missing_file(err: &YemotError) -> bool {
+    let msg = match err {
+        YemotError::Api { message, .. } => message.to_lowercase(),
+        YemotError::BadRequest(m) => m.to_lowercase(),
+        _ => return false,
+    };
+    msg.contains("does not exist")
+        || msg.contains("not exist")
+        || msg.contains("no such file")
+        || msg.contains("file not found")
+}
+
+fn looks_like_dead_session(message: &str) -> bool {
+    let m = message.to_lowercase();
+    (m.contains("token") || m.contains("session"))
+        && (m.contains("invalid")
+            || m.contains("expire")
+            || m.contains("incorrect")
+            || m.contains("not found")
+            || m.contains("wrong"))
+        || m.contains("not logged in")
+        || m.contains("no session")
+}
+
+/// Classify a decoded API response by its `responseStatus` / `message`.
+pub fn classify_response(json: &Value) -> Result<(), YemotError> {
+    let status = json
+        .get("responseStatus")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let message = json
+        .get("message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let code = json.get("messageCode").and_then(|v| v.as_i64());
+
+    // MFA_REQUIRED arrives as ERROR *or* FORBIDDEN.
+    if message.contains("MFA_REQUIRED") {
+        return Err(YemotError::MfaRequired);
+    }
+
+    match status {
+        "OK" => Ok(()),
+        "FORBIDDEN" => Err(YemotError::Forbidden(if message.is_empty() {
+            "הבקשה נדחתה על ידי השרת".to_string()
+        } else {
+            message
+        })),
+        "ERROR" | "EXCEPTION" => {
+            if looks_like_dead_session(&message) {
+                Err(YemotError::SessionExpired(message))
+            } else {
+                Err(YemotError::Api {
+                    code,
+                    message: if message.is_empty() {
+                        format!("הפעולה נכשלה ({})", status)
+                    } else {
+                        message
+                    },
+                })
+            }
+        }
+        "" => Err(YemotError::BadRequest(
+            "תשובה לא תקינה מהשרת (חסר responseStatus)".to_string(),
+        )),
+        other => Err(YemotError::Api {
+            code,
+            message: format!("סטטוס לא מוכר: {} {}", other, message).trim_end().to_string(),
+        }),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Path canonicalisation
+// ---------------------------------------------------------------------------
+
+fn strip_scheme(input: &str) -> &str {
+    let s = input.trim();
+    for p in ["ivr2:", "ivr2/", "ivr:", "ivr/"] {
+        if let Some(rest) = s.strip_prefix(p) {
+            return rest;
+        }
+    }
+    s
+}
+
+/// Canonicalise an extension path to `ivr2:/1/2` (root → `ivr2:/`).
+///
+/// Accepts `/1/2`, `1/2`, `ivr2:/1/2`, `ivr2:1/2`, with or without a trailing
+/// slash. Anything containing characters outside `[0-9/]` is rejected.
+pub fn canon_ext(input: &str) -> Result<String, YemotError> {
+    let body = strip_scheme(input).trim();
+    let body = body.trim_matches('/');
+    if body.is_empty() {
+        return Ok("ivr2:/".to_string());
+    }
+    let mut segments = Vec::new();
+    for seg in body.split('/') {
+        if seg.is_empty() {
+            return Err(YemotError::BadRequest(format!(
+                "נתיב שלוחה לא תקין: {}",
+                input
+            )));
+        }
+        if !seg.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(YemotError::BadRequest(format!(
+                "נתיב שלוחה לא תקין (מותרים ספרות ו-/ בלבד): {}",
+                input
+            )));
+        }
+        segments.push(seg);
+    }
+    Ok(format!("ivr2:/{}", segments.join("/")))
+}
+
+fn is_valid_filename(name: &str) -> bool {
+    if name.is_empty() || name.starts_with('.') {
+        return false;
+    }
+    let Some((stem, ext)) = name.rsplit_once('.') else {
+        return false;
+    };
+    !stem.is_empty()
+        && !ext.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
+/// Canonicalise a file path (`ivr2:/1/ext.ini`). The directory part must be a
+/// valid extension path and the last segment a plain `name.ext` filename.
+pub fn canon_file(input: &str) -> Result<String, YemotError> {
+    let body = strip_scheme(input).trim().trim_start_matches('/');
+    let (dir, name) = match body.rsplit_once('/') {
+        Some((d, n)) => (d, n),
+        None => ("", body),
+    };
+    if !is_valid_filename(name) {
+        return Err(YemotError::BadRequest(format!(
+            "שם קובץ לא תקין: {}",
+            input
+        )));
+    }
+    let dir = canon_ext(dir)?;
+    Ok(join_file(&dir, name))
+}
+
+fn join_file(canon_dir: &str, name: &str) -> String {
+    if canon_dir == "ivr2:/" {
+        format!("ivr2:/{}", name)
+    } else {
+        format!("{}/{}", canon_dir, name)
+    }
+}
+
+fn ext_ini_path(canon_dir: &str) -> String {
+    join_file(canon_dir, "ext.ini")
+}
+
+/// `ivr2:/1/2` → `/1/2` (what the model and the UI see).
+pub fn display_path(canon: &str) -> String {
+    let s = canon.strip_prefix("ivr2:").unwrap_or(canon);
+    if s.is_empty() {
+        "/".to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+fn parent_of_file(canon_file_path: &str) -> String {
+    match canon_file_path.rsplit_once('/') {
+        Some(("ivr2:", _)) | None => "ivr2:/".to_string(),
+        Some((dir, _)) => dir.to_string(),
+    }
+}
+
+fn file_extension(path: &str) -> String {
+    path.rsplit('/')
+        .next()
+        .and_then(|n| n.rsplit_once('.'))
+        .map(|(_, e)| e.to_lowercase())
+        .unwrap_or_default()
+}
+
+// ---------------------------------------------------------------------------
+// Value types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct ExtRead {
+    pub exists: bool,
+    pub ini: ExtIni,
+    pub size: Option<u64>,
+    pub mtime: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ExtNode {
+    pub path: String,
+    pub ext_type: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TextFile {
+    pub exists: bool,
+    pub contents: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SystemInfo {
+    pub system: String,
+    pub units: Option<f64>,
+    pub units_expire: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ParamOutcome {
+    pub key: String,
+    pub value: String,
+    pub applied: bool,
+    pub note: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Session cache
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+struct CachedExt {
+    exists: bool,
+    ini: ExtIni,
+    size: Option<u64>,
+    mtime: Option<String>,
+    at: Instant,
+}
+
+/// Per-session cache of `ext.ini` reads, keyed by canonical extension path.
+#[derive(Debug, Default)]
+pub struct SessionCache {
+    ext: HashMap<String, CachedExt>,
+}
+
+impl SessionCache {
+    fn fresh(&self, path: &str) -> Option<&CachedExt> {
+        self.ext.get(path).filter(|e| e.at.elapsed() < CACHE_TTL)
+    }
+
+    fn put(&mut self, path: &str, entry: CachedExt) {
+        self.ext.insert(path.to_string(), entry);
+    }
+
+    fn invalidate(&mut self, path: &str) {
+        self.ext.remove(path);
+    }
+
+    fn clear(&mut self) {
+        self.ext.clear();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Client
+// ---------------------------------------------------------------------------
+
+/// A Yemot API session. The token never leaves this struct.
+pub struct YemotClient {
+    token: String,
+    cache: RwLock<SessionCache>,
+}
+
+impl fmt::Debug for YemotClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("YemotClient")
+            .field("token", &"<redacted>")
+            .finish_non_exhaustive()
+    }
+}
+
+/// One raw API request: decodes the JSON body without classifying it.
+async fn post_json(
+    token: &str,
+    endpoint: &str,
+    params: Map<String, Value>,
+) -> Result<Value, YemotError> {
+    let url = format!("{}{}", YEMOT_API_BASE, endpoint);
+    let res = http()
+        .post(&url)
+        .header("authorization", token)
+        .header("Content-Type", "application/json")
+        .json(&Value::Object(params))
+        .send()
+        .await
+        .map_err(|e| YemotError::Network(e.to_string()))?;
+
+    let status = res.status();
+    let body = res
+        .text()
+        .await
+        .map_err(|e| YemotError::Network(e.to_string()))?;
+
+    let json: Value = match serde_json::from_str(&body) {
+        Ok(v) => v,
+        Err(_) => {
+            if status.as_u16() == 401 || status.as_u16() == 403 {
+                return Err(YemotError::Forbidden(format!("HTTP {}", status.as_u16())));
+            }
+            return Err(YemotError::BadRequest(format!(
+                "תשובה לא תקינה מהשרת (HTTP {})",
+                status.as_u16()
+            )));
+        }
+    };
+
+    Ok(json)
+}
+
+/// One API request, classified. Free function so it can be spawned onto a task.
+async fn call_raw(
+    token: &str,
+    endpoint: &str,
+    params: Map<String, Value>,
+) -> Result<Value, YemotError> {
+    let json = post_json(token, endpoint, params).await?;
+    classify_response(&json)?;
+    Ok(json)
+}
+
+fn params_of(pairs: &[(&str, &str)]) -> Map<String, Value> {
+    let mut m = Map::new();
+    for (k, v) in pairs {
+        m.insert((*k).to_string(), json!(v));
+    }
+    m
+}
+
+fn ini_from_object(obj: &Map<String, Value>) -> ExtIni {
+    let lines = obj
+        .iter()
+        .map(|(k, v)| {
+            let value = match v {
+                Value::String(s) => s.clone(),
+                Value::Null => String::new(),
+                other => other.to_string(),
+            };
+            IniLine::Pair {
+                key: k.clone(),
+                value: value.clone(),
+                raw: format!("{}={}", k, value),
+            }
+        })
+        .collect();
+    ExtIni { lines }
+}
+
+fn natural_key(path: &str) -> Vec<u64> {
+    display_path(path)
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.parse::<u64>().unwrap_or(u64::MAX))
+        .collect()
+}
+
+fn children_from_dir(parent_canon: &str, json: &Value) -> Vec<ExtNode> {
+    let mut out = Vec::new();
+    let Some(dirs) = json.get("dirs").and_then(|v| v.as_array()) else {
+        return out;
+    };
+    for d in dirs {
+        let Some(name) = d.get("name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let child = if parent_canon == "ivr2:/" {
+            canon_ext(name)
+        } else {
+            canon_ext(&format!("{}/{}", display_path(parent_canon), name))
+        };
+        let Ok(path) = child else { continue };
+        out.push(ExtNode {
+            path,
+            ext_type: d
+                .get("extType")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            title: d
+                .get("extTitle")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        });
+    }
+    out
+}
+
+impl YemotClient {
+    pub fn new(token: impl Into<String>) -> Self {
+        YemotClient {
+            token: token.into(),
+            cache: RwLock::new(SessionCache::default()),
+        }
+    }
+
+    async fn call(&self, endpoint: &str, params: Map<String, Value>) -> Result<Value, YemotError> {
+        call_raw(&self.token, endpoint, params).await
+    }
+
+    /// Is a fresh `ext.ini` for this path already cached?
+    pub async fn has_ext(&self, path: &str) -> bool {
+        let Ok(canon) = canon_ext(path) else {
+            return false;
+        };
+        self.cache.read().await.fresh(&canon).is_some()
+    }
+
+    /// Drop every cached `ext.ini`.
+    pub async fn clear(&self) {
+        self.cache.write().await.clear();
+    }
+
+    async fn cache_put(&self, canon: &str, read: &ExtRead) {
+        self.cache.write().await.put(
+            canon,
+            CachedExt {
+                exists: read.exists,
+                ini: read.ini.clone(),
+                size: read.size,
+                mtime: read.mtime.clone(),
+                at: Instant::now(),
+            },
+        );
+    }
+
+    /// Read (and cache) the `ext.ini` of an extension.
+    /// A missing file is *not* an error — it yields `exists=false`.
+    pub async fn get_ext_ini(&self, path: &str) -> Result<ExtRead, YemotError> {
+        let canon = canon_ext(path)?;
+        if let Some(hit) = self.cache.read().await.fresh(&canon) {
+            return Ok(ExtRead {
+                exists: hit.exists,
+                ini: hit.ini.clone(),
+                size: hit.size,
+                mtime: hit.mtime.clone(),
+            });
+        }
+
+        let what = ext_ini_path(&canon);
+        let json = match self.call("GetTextFile", params_of(&[("what", &what)])).await {
+            Ok(j) => j,
+            Err(e) if is_missing_file(&e) => {
+                let read = ExtRead {
+                    exists: false,
+                    ini: ExtIni::default(),
+                    size: None,
+                    mtime: None,
+                };
+                self.cache_put(&canon, &read).await;
+                return Ok(read);
+            }
+            Err(e) => return Err(e),
+        };
+
+        let meta = json
+            .get("file")
+            .and_then(|f| f.as_array().and_then(|a| a.first()).or(Some(f)))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let exists = meta.get("exists").and_then(|v| v.as_bool()).unwrap_or(true);
+        let contents = json.get("contents").and_then(|v| v.as_str()).unwrap_or("");
+
+        let read = ExtRead {
+            exists,
+            ini: if exists {
+                ExtIni::parse(contents)
+            } else {
+                ExtIni::default()
+            },
+            size: meta.get("size").and_then(|v| v.as_u64()),
+            mtime: meta
+                .get("mtime")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+        };
+        self.cache_put(&canon, &read).await;
+        Ok(read)
+    }
+
+    async fn seed_cache_from_dir(&self, canon: &str, json: &Value) {
+        if let Some(obj) = json.get("extIni").and_then(|v| v.as_object()) {
+            if obj.is_empty() {
+                return;
+            }
+            let read = ExtRead {
+                exists: true,
+                ini: ini_from_object(obj),
+                size: None,
+                mtime: None,
+            };
+            self.cache_put(canon, &read).await;
+        }
+    }
+
+    /// List child extensions of `path`. `depth = 2` also lists grandchildren
+    /// (children fetched concurrently, capped at 25 requests).
+    pub async fn list_extensions(
+        &self,
+        path: &str,
+        depth: u8,
+    ) -> Result<Vec<ExtNode>, YemotError> {
+        let root = canon_ext(path)?;
+        let json = self
+            .call("GetIVR2Dir", params_of(&[("path", &root)]))
+            .await?;
+        self.seed_cache_from_dir(&root, &json).await;
+        let mut nodes = children_from_dir(&root, &json);
+
+        if depth >= 2 && !nodes.is_empty() {
+            let targets: Vec<String> = nodes
+                .iter()
+                .take(MAX_CHILD_REQUESTS)
+                .map(|n| n.path.clone())
+                .collect();
+            let mut set = tokio::task::JoinSet::new();
+            for target in targets {
+                let token = self.token.clone();
+                set.spawn(async move {
+                    let res = call_raw(&token, "GetIVR2Dir", params_of(&[("path", &target)])).await;
+                    (target, res)
+                });
+            }
+            let mut extra = Vec::new();
+            while let Some(joined) = set.join_next().await {
+                if let Ok((parent, Ok(child_json))) = joined {
+                    self.seed_cache_from_dir(&parent, &child_json).await;
+                    extra.extend(children_from_dir(&parent, &child_json));
+                }
+            }
+            nodes.extend(extra);
+        }
+
+        nodes.sort_by_key(|n| natural_key(&n.path));
+        nodes.dedup_by(|a, b| a.path == b.path);
+        Ok(nodes)
+    }
+
+    /// Read any text file (ini / txt / …). Audio and binary files are refused.
+    pub async fn get_text_file(&self, path: &str) -> Result<TextFile, YemotError> {
+        let canon = canon_file(path)?;
+        let ext = file_extension(&canon);
+        if BINARY_EXTS.contains(&ext.as_str()) {
+            return Err(YemotError::BadRequest(format!(
+                "לא ניתן לקרוא קובץ מסוג {} כטקסט",
+                ext
+            )));
+        }
+        match self.call("GetTextFile", params_of(&[("what", &canon)])).await {
+            Ok(json) => {
+                let meta = json
+                    .get("file")
+                    .and_then(|f| f.as_array().and_then(|a| a.first()).or(Some(f)))
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                let exists = meta.get("exists").and_then(|v| v.as_bool()).unwrap_or(true);
+                Ok(TextFile {
+                    exists,
+                    contents: json
+                        .get("contents")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                })
+            }
+            Err(e) if is_missing_file(&e) => Ok(TextFile {
+                exists: false,
+                contents: String::new(),
+            }),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// `GetSession`, whitelisted to three harmless fields. The response also
+    /// carries `accessPassword` / `recordPassword`; those must never leave Rust.
+    pub async fn get_system_info(&self) -> Result<SystemInfo, YemotError> {
+        let json = self.call("GetSession", Map::new()).await?;
+        Ok(SystemInfo {
+            system: json
+                .get("username")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            units: json.get("units").and_then(|v| v.as_f64()),
+            units_expire: json
+                .get("unitsExpireDate")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+        })
+    }
+
+    /// Apply several `ext.ini` parameters in ONE `UpdateExtension` request,
+    /// then re-read the file and report, per parameter, whether it stuck.
+    pub async fn update_extension(
+        &self,
+        path: &str,
+        params: &[(String, String)],
+    ) -> Result<Vec<ParamOutcome>, YemotError> {
+        let canon = canon_ext(path)?;
+        if params.is_empty() {
+            return Err(YemotError::BadRequest("לא נשלחו פרמטרים לעדכון".to_string()));
+        }
+
+        let mut body = Map::new();
+        body.insert("path".to_string(), json!(canon));
+        for (key, value) in params {
+            let key = key.trim();
+            if key.is_empty() {
+                return Err(YemotError::BadRequest("שם פרמטר ריק".to_string()));
+            }
+            if key.eq_ignore_ascii_case("token") || key.eq_ignore_ascii_case("path") {
+                return Err(YemotError::BadRequest(format!(
+                    "שם פרמטר שמור ואינו מותר: {}",
+                    key
+                )));
+            }
+            if key.contains(['\r', '\n', '=']) || value.contains(['\r', '\n']) {
+                return Err(YemotError::BadRequest(format!(
+                    "ערך רב-שורתי אינו נתמך בעדכון שלוחה: {}",
+                    key
+                )));
+            }
+            if body.insert(key.to_string(), json!(value)).is_some() {
+                return Err(YemotError::BadRequest(format!(
+                    "הפרמטר {} נשלח יותר מפעם אחת",
+                    key
+                )));
+            }
+        }
+
+        self.call("UpdateExtension", body).await?;
+        self.cache.write().await.invalidate(&canon);
+
+        // Verify by reading the file back — the API reports nothing per-param.
+        let read = self.get_ext_ini(&canon).await;
+        Ok(params
+            .iter()
+            .map(|(key, value)| match &read {
+                Ok(r) => {
+                    let current = r.ini.get(key.trim());
+                    let applied = current == Some(value.as_str());
+                    ParamOutcome {
+                        key: key.trim().to_string(),
+                        value: value.clone(),
+                        applied,
+                        note: if applied {
+                            None
+                        } else {
+                            Some(format!(
+                                "הערך בקובץ כעת: {}",
+                                current.unwrap_or("(לא קיים)")
+                            ))
+                        },
+                    }
+                }
+                Err(_) => ParamOutcome {
+                    key: key.trim().to_string(),
+                    value: value.clone(),
+                    applied: false,
+                    note: Some(NOTE_UNVERIFIED.to_string()),
+                },
+            })
+            .collect())
+    }
+
+    /// Overwrite a text file completely. Returns the previous contents (for an
+    /// undo), or `None` if the file did not exist.
+    pub async fn upload_text_file(
+        &self,
+        path: &str,
+        contents: &str,
+    ) -> Result<Option<String>, YemotError> {
+        let canon = canon_file(path)?;
+        let ext = file_extension(&canon);
+        if BINARY_EXTS.contains(&ext.as_str()) {
+            return Err(YemotError::BadRequest(format!(
+                "לא ניתן להעלות טקסט לקובץ מסוג {}",
+                ext
+            )));
+        }
+
+        let previous = match self.get_text_file(&canon).await {
+            Ok(t) if t.exists => Some(t.contents),
+            Ok(_) => None,
+            Err(e) if is_missing_file(&e) => None,
+            Err(e) => return Err(e),
+        };
+
+        let mut body = Map::new();
+        body.insert("what".to_string(), json!(canon));
+        body.insert("contents".to_string(), json!(contents));
+        self.call("UploadTextFile", body).await?;
+
+        self.cache.write().await.invalidate(&parent_of_file(&canon));
+        Ok(previous)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Model-facing renderers (flat text, no JSON)
+// ---------------------------------------------------------------------------
+
+pub fn render_ext_read(path: &str, read: &ExtRead, max_bytes: usize) -> String {
+    let mut out = format!(
+        "ext={} exists={} size={} mtime={}\n",
+        display_path(path),
+        read.exists,
+        read.size
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "-".to_string()),
+        read.mtime.clone().unwrap_or_else(|| "-".to_string())
+    );
+    if !read.exists {
+        out.push_str("(אין קובץ ext.ini — השלוחה אינה מוגדרת)\n");
+        return out;
+    }
+    let (body, truncated) = read.ini.to_compact(max_bytes);
+    let shown = body.lines().count();
+    let total = read.ini.key_count();
+    out.push_str(&body);
+    if truncated {
+        out.push_str(&format!("... [TRUNCATED: {} of {} keys]\n", shown, total));
+    } else {
+        out.push_str(&format!("({} keys)\n", total));
+    }
+    out
+}
+
+pub fn render_tree(nodes: &[ExtNode]) -> String {
+    if nodes.is_empty() {
+        return "(אין שלוחות)\n".to_string();
+    }
+    let mut out = String::new();
+    for n in nodes.iter().take(MAX_TREE_LINES) {
+        out.push_str(&format!(
+            "{}  type={}  title={}\n",
+            display_path(&n.path),
+            if n.ext_type.is_empty() { "-" } else { &n.ext_type },
+            if n.title.is_empty() { "-" } else { &n.title }
+        ));
+    }
+    if nodes.len() > MAX_TREE_LINES {
+        out.push_str(&format!("… ועוד {}\n", nodes.len() - MAX_TREE_LINES));
+    }
+    out
+}
+
+pub fn render_outcomes(path: &str, outcomes: &[ParamOutcome]) -> String {
+    let applied = outcomes.iter().filter(|o| o.applied).count();
+    let mut out = format!(
+        "update {} applied={}/{}\n",
+        display_path(path),
+        applied,
+        outcomes.len()
+    );
+    for o in outcomes {
+        if o.applied {
+            out.push_str(&format!("{}={} OK\n", o.key, o.value));
+        } else {
+            out.push_str(&format!(
+                "{}={} FAILED — {}\n",
+                o.key,
+                o.value,
+                o.note.clone().unwrap_or_else(|| "לא הוחל".to_string())
+            ));
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Frontend DTOs
+// ---------------------------------------------------------------------------
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct YemotSessionResult {
@@ -26,204 +903,29 @@ pub struct YemotActionResult {
     pub message: String,
 }
 
-#[tauri::command]
-pub async fn check_yemot_token(token: String) -> Result<YemotSessionResult, String> {
-    if token.trim().is_empty() {
-        return Ok(YemotSessionResult {
-            success: false,
-            message: "טוקן ימות המשיח ריק".to_string(),
-            mfa_required: false,
-            mfa_token: None,
-        });
-    }
-
-    let client = reqwest::Client::new();
-    let url = format!("{}GetSession?token={}", YEMOT_API_BASE, token);
-
-    let res = client
-        .get(&url)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|e| format!("שגיאת רשת: {}", e))?;
-
-    let json: serde_json::Value = res
-        .json()
-        .await
-        .map_err(|e| format!("שגיאת פענוח תשובה: {}", e))?;
-
-    let response_status = json["responseStatus"].as_str().unwrap_or("");
-    let message = json["message"].as_str().unwrap_or("");
-
-    if response_status == "OK" {
-        Ok(YemotSessionResult {
-            success: true,
-            message: "טוקן תקין ומחובר בהצלחה".to_string(),
-            mfa_required: false,
-            mfa_token: None,
-        })
-    } else if response_status == "MFA_REQUIRED" || message.contains("mfa required") {
-        let mfa_tok = json["mfaToken"].as_str().map(|s| s.to_string());
-        Ok(YemotSessionResult {
-            success: false,
-            message: "נדרש אימות דו-שלבי (MFA)".to_string(),
-            mfa_required: true,
-            mfa_token: mfa_tok,
-        })
-    } else {
-        Ok(YemotSessionResult {
-            success: false,
-            message: if !message.is_empty() {
-                message.to_string()
-            } else {
-                "טוקן לא תקין או שפג תוקפו".to_string()
-            },
-            mfa_required: false,
-            mfa_token: None,
-        })
-    }
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ExtParam {
+    pub key: String,
+    pub value: String,
 }
 
-#[tauri::command]
-pub async fn request_yemot_mfa(
-    token: String,
-    mfa_token: String,
-    method: String, // "call" or "sms"
-) -> Result<YemotMfaResult, String> {
-    let client = reqwest::Client::new();
-    let url = format!(
-        "{}SendMfaCode?token={}&mfaToken={}&method={}",
-        YEMOT_API_BASE, token, mfa_token, method
-    );
-
-    let res = client
-        .get(&url)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|e| format!("שגיאת רשת: {}", e))?;
-
-    let json: serde_json::Value = res
-        .json()
-        .await
-        .map_err(|e| format!("שגיאת פענוח תשובה: {}", e))?;
-
-    let status = json["responseStatus"].as_str().unwrap_or("");
-    let msg = json["message"].as_str().unwrap_or("");
-
-    if status == "OK" {
-        Ok(YemotMfaResult {
-            success: true,
-            message: "קוד אימות נשלח בהצלחה".to_string(),
-            new_token: None,
-        })
-    } else {
-        Ok(YemotMfaResult {
-            success: false,
-            message: if !msg.is_empty() {
-                msg.to_string()
-            } else {
-                "שליחת קוד אימות נכשלה".to_string()
-            },
-            new_token: None,
-        })
-    }
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ExtensionUpdateResult {
+    pub success: bool,
+    pub path: String,
+    pub params: Vec<ParamOutcome>,
+    pub message: String,
+    pub verified: bool,
 }
 
-#[tauri::command]
-pub async fn verify_yemot_mfa(
-    token: String,
-    mfa_token: String,
-    code: String,
-) -> Result<YemotMfaResult, String> {
-    let client = reqwest::Client::new();
-    let url = format!(
-        "{}VerifyMfaCode?token={}&mfaToken={}&code={}",
-        YEMOT_API_BASE, token, mfa_token, code
-    );
-
-    let res = client
-        .get(&url)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|e| format!("שגיאת רשת: {}", e))?;
-
-    let json: serde_json::Value = res
-        .json()
-        .await
-        .map_err(|e| format!("שגיאת פענוח תשובה: {}", e))?;
-
-    let status = json["responseStatus"].as_str().unwrap_or("");
-    let msg = json["message"].as_str().unwrap_or("");
-
-    if status == "OK" {
-        let updated_token = json["token"].as_str().unwrap_or(&token).to_string();
-        Ok(YemotMfaResult {
-            success: true,
-            message: "אימות הצליח!".to_string(),
-            new_token: Some(updated_token),
-        })
-    } else {
-        Ok(YemotMfaResult {
-            success: false,
-            message: if !msg.is_empty() {
-                msg.to_string()
-            } else {
-                "קוד אימות שגוי".to_string()
-            },
-            new_token: None,
-        })
-    }
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ExtReadDto {
+    pub exists: bool,
+    pub path: String,
+    pub pairs: Vec<(String, String)>,
+    pub size: Option<u64>,
+    pub mtime: Option<String>,
 }
-
-#[tauri::command]
-pub async fn execute_yemot_action(
-    token: String,
-    path: String,
-    key: String,
-    value: String,
-) -> Result<YemotActionResult, String> {
-    let client = reqwest::Client::new();
-    let url = format!("{}UpdateExtension", YEMOT_API_BASE);
-
-    let params = [
-        ("token", token.as_str()),
-        ("path", path.as_str()),
-        (&key, value.as_str()),
-    ];
-
-    let res = client
-        .post(&url)
-        .form(&params)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|e| format!("שגיאת רשת: {}", e))?;
-
-    if res.status().is_success() {
-        Ok(YemotActionResult {
-            success: true,
-            path,
-            key,
-            value,
-            message: "עודכן בהצלחה במערכת ימות המשיח".to_string(),
-        })
-    } else {
-        let err_text = res.text().await.unwrap_or_default();
-        Ok(YemotActionResult {
-            success: false,
-            path,
-            key,
-            value,
-            message: format!("שגיאה בעדכון: {}", err_text),
-        })
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Login (create token from system number + password), MFA & logout
-// ---------------------------------------------------------------------------
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct YemotLoginResult {
@@ -253,19 +955,9 @@ pub struct YemotSimpleResult {
     pub message: String,
 }
 
-async fn yemot_get(client: &reqwest::Client, url: &str) -> Result<serde_json::Value, String> {
-    let res = client
-        .get(url)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|e| format!("שגיאת רשת: {}", e))?;
-    let json: serde_json::Value = res
-        .json()
-        .await
-        .map_err(|e| format!("שגיאת פענוח תשובה: {}", e))?;
-    Ok(json)
-}
+// ---------------------------------------------------------------------------
+// Tauri commands
+// ---------------------------------------------------------------------------
 
 /// Minimal URL-encoding for query parameter values.
 fn urlencode(input: &str) -> String {
@@ -281,6 +973,266 @@ fn urlencode(input: &str) -> String {
     out
 }
 
+async fn yemot_get(url: &str) -> Result<Value, String> {
+    let res = http()
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("שגיאת רשת: {}", e))?;
+    res.json::<Value>()
+        .await
+        .map_err(|e| format!("שגיאת פענוח תשובה: {}", e))
+}
+
+#[tauri::command]
+pub async fn check_yemot_token(token: String) -> Result<YemotSessionResult, String> {
+    if token.trim().is_empty() {
+        return Ok(YemotSessionResult {
+            success: false,
+            message: "טוקן ימות המשיח ריק".to_string(),
+            mfa_required: false,
+            mfa_token: None,
+        });
+    }
+
+    // We look only at responseStatus / message / mfaToken and never surface any
+    // other GetSession field (it carries accessPassword / recordPassword etc.).
+    let json = match post_json(token.trim(), "GetSession", Map::new()).await {
+        Ok(j) => j,
+        Err(YemotError::Network(e)) => return Err(format!("שגיאת רשת: {}", e)),
+        Err(e) => {
+            return Ok(YemotSessionResult {
+                success: false,
+                message: render_error(&e),
+                mfa_required: false,
+                mfa_token: None,
+            })
+        }
+    };
+
+    // The MFA session handle is not a credential; the legacy MFA modal needs it.
+    let mfa_token = json
+        .get("mfaToken")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let err = match classify_response(&json) {
+        Ok(()) => {
+            return Ok(YemotSessionResult {
+                success: true,
+                message: "טוקן תקין ומחובר בהצלחה".to_string(),
+                mfa_required: false,
+                mfa_token: None,
+            })
+        }
+        Err(YemotError::MfaRequired) => {
+            return Ok(YemotSessionResult {
+                success: false,
+                message: "נדרש אימות דו-שלבי (MFA)".to_string(),
+                mfa_required: true,
+                mfa_token,
+            })
+        }
+        Err(e) => e,
+    };
+
+    Ok(YemotSessionResult {
+        success: false,
+        message: match &err {
+            YemotError::Api { message, .. }
+            | YemotError::Forbidden(message)
+            | YemotError::SessionExpired(message)
+            | YemotError::BadRequest(message)
+                if !message.is_empty() =>
+            {
+                message.clone()
+            }
+            _ => "טוקן לא תקין או שפג תוקפו".to_string(),
+        },
+        mfa_required: false,
+        mfa_token: None,
+    })
+}
+
+#[tauri::command]
+pub async fn request_yemot_mfa(
+    token: String,
+    mfa_token: String,
+    method: String, // "call" or "sms"
+) -> Result<YemotMfaResult, String> {
+    let url = format!(
+        "{}SendMfaCode?token={}&mfaToken={}&method={}",
+        YEMOT_API_BASE,
+        urlencode(&token),
+        urlencode(&mfa_token),
+        urlencode(&method)
+    );
+    let json = yemot_get(&url).await?;
+    let msg = json["message"].as_str().unwrap_or("");
+
+    match classify_response(&json) {
+        Ok(()) => Ok(YemotMfaResult {
+            success: true,
+            message: "קוד אימות נשלח בהצלחה".to_string(),
+            new_token: None,
+        }),
+        Err(_) => Ok(YemotMfaResult {
+            success: false,
+            message: if msg.is_empty() {
+                "שליחת קוד אימות נכשלה".to_string()
+            } else {
+                msg.to_string()
+            },
+            new_token: None,
+        }),
+    }
+}
+
+#[tauri::command]
+pub async fn verify_yemot_mfa(
+    token: String,
+    mfa_token: String,
+    code: String,
+) -> Result<YemotMfaResult, String> {
+    let url = format!(
+        "{}VerifyMfaCode?token={}&mfaToken={}&code={}",
+        YEMOT_API_BASE,
+        urlencode(&token),
+        urlencode(&mfa_token),
+        urlencode(&code)
+    );
+    let json = yemot_get(&url).await?;
+    let msg = json["message"].as_str().unwrap_or("");
+
+    match classify_response(&json) {
+        Ok(()) => {
+            let updated_token = json["token"].as_str().unwrap_or(&token).to_string();
+            Ok(YemotMfaResult {
+                success: true,
+                message: "אימות הצליח!".to_string(),
+                new_token: Some(updated_token),
+            })
+        }
+        Err(_) => Ok(YemotMfaResult {
+            success: false,
+            message: if msg.is_empty() {
+                "קוד אימות שגוי".to_string()
+            } else {
+                msg.to_string()
+            },
+            new_token: None,
+        }),
+    }
+}
+
+#[tauri::command]
+pub async fn execute_yemot_action(
+    token: String,
+    path: String,
+    key: String,
+    value: String,
+) -> Result<YemotActionResult, String> {
+    let client = YemotClient::new(token);
+    match client
+        .update_extension(&path, &[(key.clone(), value.clone())])
+        .await
+    {
+        Ok(outcomes) => {
+            let o = outcomes.into_iter().next().ok_or("לא התקבלה תוצאה")?;
+            let unverified = o.note.as_deref() == Some(NOTE_UNVERIFIED);
+            Ok(YemotActionResult {
+                success: o.applied || unverified,
+                path,
+                key,
+                value,
+                message: if o.applied {
+                    "עודכן בהצלחה במערכת ימות המשיח".to_string()
+                } else if unverified {
+                    "העדכון נשלח אך לא אומת".to_string()
+                } else {
+                    format!(
+                        "העדכון לא הוחל: {}",
+                        o.note.unwrap_or_else(|| "סיבה לא ידועה".to_string())
+                    )
+                },
+            })
+        }
+        Err(e) => Ok(YemotActionResult {
+            success: false,
+            path,
+            key,
+            value,
+            message: render_error(&e),
+        }),
+    }
+}
+
+/// Apply several parameters to one extension in a single API request.
+#[tauri::command]
+pub async fn execute_yemot_actions(
+    token: String,
+    path: String,
+    params: Vec<ExtParam>,
+) -> Result<ExtensionUpdateResult, String> {
+    let client = YemotClient::new(token);
+    let pairs: Vec<(String, String)> = params.into_iter().map(|p| (p.key, p.value)).collect();
+    let canon = canon_ext(&path).map(|c| display_path(&c)).unwrap_or(path);
+
+    match client.update_extension(&canon, &pairs).await {
+        Ok(outcomes) => {
+            let verified = !outcomes
+                .iter()
+                .any(|o| o.note.as_deref() == Some(NOTE_UNVERIFIED));
+            let applied = outcomes.iter().filter(|o| o.applied).count();
+            Ok(ExtensionUpdateResult {
+                success: if verified {
+                    applied == outcomes.len()
+                } else {
+                    true
+                },
+                path: canon,
+                message: if !verified {
+                    "העדכון נשלח אך לא ניתן היה לאמת אותו".to_string()
+                } else {
+                    format!("הוחלו {} מתוך {} פרמטרים", applied, outcomes.len())
+                },
+                verified,
+                params: outcomes,
+            })
+        }
+        Err(e) => Ok(ExtensionUpdateResult {
+            success: false,
+            path: canon,
+            params: Vec::new(),
+            message: render_error(&e),
+            verified: false,
+        }),
+    }
+}
+
+/// Read an extension's `ext.ini` for the UI diff preview.
+#[tauri::command]
+pub async fn read_extension_config(token: String, path: String) -> Result<ExtReadDto, String> {
+    let client = YemotClient::new(token);
+    let canon = canon_ext(&path).map_err(|e| render_error(&e))?;
+    let read = client
+        .get_ext_ini(&canon)
+        .await
+        .map_err(|e| render_error(&e))?;
+    Ok(ExtReadDto {
+        exists: read.exists,
+        path: display_path(&canon),
+        pairs: read
+            .ini
+            .pairs()
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        size: read.size,
+        mtime: read.mtime,
+    })
+}
+
 /// Login with system number + password. Returns a token; indicates whether
 /// MFA (two-factor) verification is still required before using it.
 #[tauri::command]
@@ -294,25 +1246,22 @@ pub async fn login_yemot(username: String, password: String) -> Result<YemotLogi
         });
     }
 
-    let client = reqwest::Client::new();
     let url = format!(
         "{}Login?username={}&password={}",
         YEMOT_API_BASE,
         urlencode(&username),
         urlencode(&password)
     );
-
-    let json = yemot_get(&client, &url).await?;
-    let status = json["responseStatus"].as_str().unwrap_or("");
+    let json = yemot_get(&url).await?;
     let msg = json["message"].as_str().unwrap_or("");
 
-    if status != "OK" {
+    if classify_response(&json).is_err() {
         return Ok(YemotLoginResult {
             success: false,
-            message: if !msg.is_empty() {
-                msg.to_string()
-            } else {
+            message: if msg.is_empty() {
                 "ההתחברות נכשלה".to_string()
+            } else {
+                msg.to_string()
             },
             token: None,
             mfa_required: false,
@@ -335,7 +1284,7 @@ pub async fn login_yemot(username: String, password: String) -> Result<YemotLogi
         YEMOT_API_BASE,
         urlencode(&token)
     );
-    let mfa_json = yemot_get(&client, &mfa_url).await?;
+    let mfa_json = yemot_get(&mfa_url).await?;
     let is_pass = mfa_json["isPass"].as_bool().unwrap_or(false);
 
     Ok(YemotLoginResult {
@@ -353,14 +1302,12 @@ pub async fn login_yemot(username: String, password: String) -> Result<YemotLogi
 /// Get available MFA verification methods (call / SMS etc.) for a session.
 #[tauri::command]
 pub async fn get_mfa_methods(token: String) -> Result<MfaMethodsResult, String> {
-    let client = reqwest::Client::new();
     let url = format!(
         "{}MFASession?token={}&action=getMFAMethods",
         YEMOT_API_BASE,
         urlencode(&token)
     );
-
-    let json = yemot_get(&client, &url).await?;
+    let json = yemot_get(&url).await?;
 
     let mut methods = Vec::new();
     if let Some(arr) = json["mfaMethods"].as_array() {
@@ -382,7 +1329,11 @@ pub async fn get_mfa_methods(token: String) -> Result<MfaMethodsResult, String> 
                 })
                 .unwrap_or_default();
             if !id.is_empty() {
-                methods.push(MfaMethod { id, label, send_types });
+                methods.push(MfaMethod {
+                    id,
+                    label,
+                    send_types,
+                });
             }
         }
     }
@@ -409,7 +1360,6 @@ pub async fn send_mfa_code(
     mfa_id: String,
     send_type: String,
 ) -> Result<YemotSimpleResult, String> {
-    let client = reqwest::Client::new();
     let url = format!(
         "{}MFASession?token={}&action=sendMFA&mfaId={}&mfaSendType={}&lang=HE",
         YEMOT_API_BASE,
@@ -418,31 +1368,28 @@ pub async fn send_mfa_code(
         urlencode(&send_type)
     );
 
-    let json = yemot_get(&client, &url).await?;
-    let status = json["responseStatus"].as_str().unwrap_or("");
+    let json = yemot_get(&url).await?;
     let msg = json["message"].as_str().unwrap_or("");
 
-    if status == "OK" {
-        Ok(YemotSimpleResult {
+    match classify_response(&json) {
+        Ok(()) => Ok(YemotSimpleResult {
             success: true,
             message: "קוד אימות נשלח בהצלחה".to_string(),
-        })
-    } else {
-        Ok(YemotSimpleResult {
+        }),
+        Err(_) => Ok(YemotSimpleResult {
             success: false,
-            message: if !msg.is_empty() {
-                format!("שגיאה: {}", msg)
-            } else {
+            message: if msg.is_empty() {
                 "שליחת הקוד נכשלה".to_string()
+            } else {
+                format!("שגיאה: {}", msg)
             },
-        })
+        }),
     }
 }
 
 /// Validate the MFA code the user received.
 #[tauri::command]
 pub async fn validate_mfa_code(token: String, code: String) -> Result<YemotSimpleResult, String> {
-    let client = reqwest::Client::new();
     let url = format!(
         "{}MFASession?token={}&action=validMFA&mfaCode={}&mfaRememberMe=false",
         YEMOT_API_BASE,
@@ -450,7 +1397,7 @@ pub async fn validate_mfa_code(token: String, code: String) -> Result<YemotSimpl
         urlencode(&code)
     );
 
-    let json = yemot_get(&client, &url).await?;
+    let json = yemot_get(&url).await?;
     let valid_status = json["mfa_valid_status"].as_str().unwrap_or("");
 
     if valid_status == "VALID" {
@@ -469,19 +1416,20 @@ pub async fn validate_mfa_code(token: String, code: String) -> Result<YemotSimpl
             Some(n) => format!("קוד שגוי. נותרו {} ניסיונות", n),
             None => "הקוד שהוזן שגוי".to_string(),
         };
-        Ok(YemotSimpleResult { success: false, message })
+        Ok(YemotSimpleResult {
+            success: false,
+            message,
+        })
     }
 }
 
 /// Logout (invalidate the token) — performed locally, never via the script.
 #[tauri::command]
 pub async fn logout_yemot(token: String) -> Result<YemotSimpleResult, String> {
-    let client = reqwest::Client::new();
     let url = format!("{}Logout?token={}", YEMOT_API_BASE, urlencode(&token));
 
-    let res = client
+    let res = http()
         .get(&url)
-        .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
         .map_err(|e| format!("שגיאת רשת: {}", e))?;
@@ -500,5 +1448,358 @@ pub async fn logout_yemot(token: String) -> Result<YemotSimpleResult, String> {
                 res.text().await.unwrap_or_default()
             ),
         })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests (no network)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canon_ext_accepts_every_documented_form() {
+        for input in ["/1/2", "1/2", "ivr2:/1/2", "ivr2:1/2", "ivr/1/2", "1/2/"] {
+            assert_eq!(canon_ext(input).unwrap(), "ivr2:/1/2", "input: {}", input);
+        }
+    }
+
+    #[test]
+    fn canon_ext_maps_root_forms() {
+        for input in ["", "/", "ivr2:/", "ivr2:"] {
+            assert_eq!(canon_ext(input).unwrap(), "ivr2:/", "input: {}", input);
+        }
+    }
+
+    #[test]
+    fn canon_ext_rejects_non_numeric_and_empty_segments() {
+        for input in ["/1/a", "../1", "1//2", "ivr2:/1/ext.ini", "1 2"] {
+            assert!(canon_ext(input).is_err(), "should reject: {}", input);
+        }
+    }
+
+    #[test]
+    fn canon_file_builds_full_paths() {
+        assert_eq!(canon_file("1/2/ext.ini").unwrap(), "ivr2:/1/2/ext.ini");
+        assert_eq!(canon_file("ivr2:/4/ext.ini").unwrap(), "ivr2:/4/ext.ini");
+        assert_eq!(canon_file("ivr/4/ext.ini").unwrap(), "ivr2:/4/ext.ini");
+        assert_eq!(canon_file("ext.ini").unwrap(), "ivr2:/ext.ini");
+        assert!(canon_file("1/2").is_err());
+        assert!(canon_file("1/../x.ini").is_err());
+    }
+
+    #[test]
+    fn display_and_ini_path_helpers() {
+        assert_eq!(display_path("ivr2:/1/2"), "/1/2");
+        assert_eq!(display_path("ivr2:/"), "/");
+        assert_eq!(ext_ini_path("ivr2:/"), "ivr2:/ext.ini");
+        assert_eq!(ext_ini_path("ivr2:/1"), "ivr2:/1/ext.ini");
+        assert_eq!(parent_of_file("ivr2:/1/2/ext.ini"), "ivr2:/1/2");
+        assert_eq!(parent_of_file("ivr2:/ext.ini"), "ivr2:/");
+    }
+
+    #[test]
+    fn classifies_ok() {
+        assert!(classify_response(&json!({"responseStatus": "OK"})).is_ok());
+    }
+
+    #[test]
+    fn classifies_mfa_required_from_error_and_forbidden() {
+        let as_error = json!({"responseStatus": "ERROR", "message": "MFA_REQUIRED"});
+        let as_forbidden = json!({"responseStatus": "FORBIDDEN", "message": "MFA_REQUIRED"});
+        assert_eq!(
+            classify_response(&as_error).unwrap_err(),
+            YemotError::MfaRequired
+        );
+        assert_eq!(
+            classify_response(&as_forbidden).unwrap_err(),
+            YemotError::MfaRequired
+        );
+    }
+
+    #[test]
+    fn classifies_plain_error_with_code() {
+        let v = json!({
+            "yemotAPIVersion": "1",
+            "responseStatus": "ERROR",
+            "message": "Username or password is incorrect",
+            "messageCode": 1
+        });
+        // "incorrect" + no token/session word => plain API error.
+        assert_eq!(
+            classify_response(&v).unwrap_err(),
+            YemotError::Api {
+                code: Some(1),
+                message: "Username or password is incorrect".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn classifies_dead_session_and_forbidden_and_missing_status() {
+        assert!(matches!(
+            classify_response(&json!({"responseStatus": "ERROR", "message": "token is invalid"}))
+                .unwrap_err(),
+            YemotError::SessionExpired(_)
+        ));
+        assert!(matches!(
+            classify_response(&json!({"responseStatus": "FORBIDDEN", "message": "ip blocked"}))
+                .unwrap_err(),
+            YemotError::Forbidden(_)
+        ));
+        assert!(matches!(
+            classify_response(&json!({"foo": 1})).unwrap_err(),
+            YemotError::BadRequest(_)
+        ));
+        assert!(matches!(
+            classify_response(&json!({"responseStatus": "EXCEPTION", "message": "boom"}))
+                .unwrap_err(),
+            YemotError::Api { .. }
+        ));
+    }
+
+    #[test]
+    fn missing_file_detection() {
+        assert!(is_missing_file(&YemotError::Api {
+            code: None,
+            message: "file does not exist".to_string()
+        }));
+        assert!(!is_missing_file(&YemotError::Api {
+            code: None,
+            message: "some other problem".to_string()
+        }));
+    }
+
+    #[test]
+    fn render_error_codes() {
+        assert!(render_error(&YemotError::MfaRequired).starts_with("SESSION_EXPIRED: "));
+        assert!(render_error(&YemotError::MfaRequired).ends_with("Stop and wait — do not retry."));
+        assert!(render_error(&YemotError::SessionExpired("gone".into()))
+            .starts_with("SESSION_EXPIRED: gone"));
+        assert_eq!(
+            render_error(&YemotError::Forbidden("nope".into())),
+            "FORBIDDEN: nope"
+        );
+        assert_eq!(
+            render_error(&YemotError::BadRequest("bad path".into())),
+            "BAD_REQUEST: bad path"
+        );
+        assert_eq!(
+            render_error(&YemotError::Api {
+                code: Some(7),
+                message: "oops".into()
+            }),
+            "ERROR[7]: oops"
+        );
+        assert_eq!(
+            render_error(&YemotError::Api {
+                code: None,
+                message: "oops".into()
+            }),
+            "ERROR[-]: oops"
+        );
+        let net = render_error(&YemotError::Network("timeout".into()));
+        assert!(net.starts_with("NETWORK_ERROR: timeout"));
+        assert!(net.contains("read the extension config to verify before retrying."));
+    }
+
+    #[test]
+    fn renders_ext_read() {
+        let read = ExtRead {
+            exists: true,
+            ini: ExtIni::parse("; c\ntype=menu\ntitle=בדיקה\n"),
+            size: Some(214),
+            mtime: Some("01/01/2026 10:00".to_string()),
+        };
+        let out = render_ext_read("ivr2:/1/2", &read, DEFAULT_MAX_BYTES);
+        assert_eq!(
+            out,
+            "ext=/1/2 exists=true size=214 mtime=01/01/2026 10:00\n\
+             type=menu\ntitle=בדיקה\n(2 keys)\n"
+        );
+    }
+
+    #[test]
+    fn renders_ext_read_truncated_and_missing() {
+        let read = ExtRead {
+            exists: true,
+            ini: ExtIni::parse("a=1\nb=2\nc=3"),
+            size: None,
+            mtime: None,
+        };
+        let out = render_ext_read("ivr2:/1", &read, 8);
+        assert!(out.contains("size=- mtime=-"));
+        assert!(out.ends_with("... [TRUNCATED: 2 of 3 keys]\n"));
+
+        let missing = ExtRead {
+            exists: false,
+            ini: ExtIni::default(),
+            size: None,
+            mtime: None,
+        };
+        let out = render_ext_read("ivr2:/9", &missing, DEFAULT_MAX_BYTES);
+        assert!(out.starts_with("ext=/9 exists=false"));
+        assert!(out.contains("אין קובץ ext.ini"));
+    }
+
+    #[test]
+    fn renders_tree_with_cap() {
+        let nodes = vec![
+            ExtNode {
+                path: "ivr2:/1".into(),
+                ext_type: "menu".into(),
+                title: "ראשי".into(),
+            },
+            ExtNode {
+                path: "ivr2:/2".into(),
+                ext_type: String::new(),
+                title: String::new(),
+            },
+        ];
+        let out = render_tree(&nodes);
+        assert_eq!(out, "/1  type=menu  title=ראשי\n/2  type=-  title=-\n");
+
+        let many: Vec<ExtNode> = (0..65)
+            .map(|i| ExtNode {
+                path: format!("ivr2:/{}", i),
+                ext_type: "menu".into(),
+                title: "t".into(),
+            })
+            .collect();
+        let out = render_tree(&many);
+        assert_eq!(out.lines().count(), MAX_TREE_LINES + 1);
+        assert!(out.ends_with("… ועוד 5\n"));
+        assert_eq!(render_tree(&[]), "(אין שלוחות)\n");
+    }
+
+    #[test]
+    fn renders_outcomes() {
+        let outcomes = vec![
+            ParamOutcome {
+                key: "type".into(),
+                value: "menu".into(),
+                applied: true,
+                note: None,
+            },
+            ParamOutcome {
+                key: "title".into(),
+                value: "x".into(),
+                applied: false,
+                note: Some("הערך בקובץ כעת: y".into()),
+            },
+        ];
+        let out = render_outcomes("ivr2:/1/2", &outcomes);
+        assert_eq!(
+            out,
+            "update /1/2 applied=1/2\ntype=menu OK\ntitle=x FAILED — הערך בקובץ כעת: y\n"
+        );
+    }
+
+    #[test]
+    fn ini_from_object_seeds_pairs() {
+        let obj = json!({"type": "menu", "num": 5});
+        let ini = ini_from_object(obj.as_object().unwrap());
+        assert_eq!(ini.get("type"), Some("menu"));
+        assert_eq!(ini.get("num"), Some("5"));
+    }
+
+    #[test]
+    fn children_from_dir_extracts_extensions() {
+        let v = json!({
+            "dirs": [
+                {"name": "1", "extType": "menu", "extTitle": "ראשי"},
+                {"name": "2"},
+                {"name": "weird-name", "extType": "menu"}
+            ]
+        });
+        let nodes = children_from_dir("ivr2:/", &v);
+        assert_eq!(nodes.len(), 2); // "weird-name" is rejected by canon_ext
+        assert_eq!(nodes[0].path, "ivr2:/1");
+        assert_eq!(nodes[0].title, "ראשי");
+        assert_eq!(nodes[1].ext_type, "");
+
+        let nested = children_from_dir("ivr2:/3", &v);
+        assert_eq!(nested[0].path, "ivr2:/3/1");
+    }
+
+    #[test]
+    fn client_debug_redacts_the_token() {
+        let c = YemotClient::new("077000000:1234");
+        let dbg = format!("{:?}", c);
+        assert!(dbg.contains("<redacted>"));
+        assert!(!dbg.contains("1234"));
+    }
+
+    #[tokio::test]
+    async fn cache_helpers_work_without_network() {
+        let c = YemotClient::new("t");
+        assert!(!c.has_ext("/1").await);
+        c.cache_put(
+            "ivr2:/1",
+            &ExtRead {
+                exists: true,
+                ini: ExtIni::parse("type=menu"),
+                size: None,
+                mtime: None,
+            },
+        )
+        .await;
+        assert!(c.has_ext("1").await);
+        assert!(c.has_ext("ivr2:/1").await);
+        c.clear().await;
+        assert!(!c.has_ext("/1").await);
+        // A bad path is never "cached".
+        assert!(!c.has_ext("/a").await);
+    }
+
+    #[tokio::test]
+    async fn update_extension_rejects_bad_params_before_any_request() {
+        let c = YemotClient::new("t");
+        assert!(matches!(
+            c.update_extension("/1", &[]).await.unwrap_err(),
+            YemotError::BadRequest(_)
+        ));
+        assert!(matches!(
+            c.update_extension("/1", &[("title".into(), "a\nb".into())])
+                .await
+                .unwrap_err(),
+            YemotError::BadRequest(_)
+        ));
+        assert!(matches!(
+            c.update_extension("/1", &[("path".into(), "x".into())])
+                .await
+                .unwrap_err(),
+            YemotError::BadRequest(_)
+        ));
+        assert!(matches!(
+            c.update_extension(
+                "/1",
+                &[("type".into(), "menu".into()), ("type".into(), "api".into())]
+            )
+            .await
+            .unwrap_err(),
+            YemotError::BadRequest(_)
+        ));
+        assert!(matches!(
+            c.update_extension("/a", &[("type".into(), "menu".into())])
+                .await
+                .unwrap_err(),
+            YemotError::BadRequest(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn get_text_file_rejects_binary_before_any_request() {
+        let c = YemotClient::new("t");
+        assert!(matches!(
+            c.get_text_file("/1/000.wav").await.unwrap_err(),
+            YemotError::BadRequest(_)
+        ));
+        assert!(matches!(
+            c.upload_text_file("/1/000.mp3", "x").await.unwrap_err(),
+            YemotError::BadRequest(_)
+        ));
     }
 }

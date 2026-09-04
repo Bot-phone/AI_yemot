@@ -26,4 +26,17 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 tokio = { version = "1", features = ["full"] }
 include_dir = "0.7"
 
+# --- knowledge index (build.rs BM25) --------------------------------------
+# No additional crates required: the index is serialized by build.rs in a
+# hand-rolled varint format and read back with std only.
+# --------------------------------------------------------------------------
 
+# --- agent loop (src/agent/**) --------------------------------------------
+# async-trait : `trait Provider { async fn complete(..) }` without hand-rolled
+#               Pin<Box<dyn Future>> signatures.
+# futures     : `future::join_all` — read-only tools of one turn run in parallel.
+# tokio-util  : `CancellationToken` — cancel between turns / mutating writes.
+async-trait = "0.1"
+futures = "0.3"
+tokio-util = "0.7"
+# --------------------------------------------------------------------------
