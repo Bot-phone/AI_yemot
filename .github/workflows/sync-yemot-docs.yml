@@ -47,8 +47,8 @@ jobs:
 
       - name: Run documentation scraper
         env:
-          GAS_WEBAPP_URL: ${{ secrets.GAS_WEBAPP_URL }}
-          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+          GAS_WEBAPP_URL: ${{ secrets.GAS_WEBAPP_URL != '' && secrets.GAS_WEBAPP_URL || (secrets.GAS_DEPLOYMENT_ID != '' && format('https://script.google.com/macros/s/{0}/exec', secrets.GAS_DEPLOYMENT_ID) || '') }}
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET != '' && secrets.ADMIN_SECRET || 'yemot_admin_secret' }}
         run: |
           EXTRA_ARGS=""
           if [ "${{ inputs.force }}" = "true" ]; then
@@ -65,10 +65,10 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # בדיקה אם נוספו או שונו קבצים בתיקיית knowledge
-          if [ -n "$(git status --porcelain knowledge/)" ]; then
+          # בדיקה אם נוספו או שונו קבצים בתיקיית knowledge או במטמון
+          if [ -n "$(git status --porcelain knowledge/ scraper/redirect_cache.json)" ]; then
             echo "זוהו שינויים בקובצי התיעוד. מבצע commit ו-push..."
-            git add knowledge/
+            git add knowledge/ scraper/redirect_cache.json
             git commit -m "סנכרון שבועי אוטומטי של תיעוד ימות המשיח [skip ci]"
             git push
             echo "קובצי התיעוד נדחפו בהצלחה למאגר!"

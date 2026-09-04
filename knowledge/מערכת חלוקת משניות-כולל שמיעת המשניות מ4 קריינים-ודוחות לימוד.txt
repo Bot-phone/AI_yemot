@@ -1,13 +1,20 @@
+# מערכת חלוקת משניות, כולל שמיעת המשניות מ4 קריינים, ודוחות לימוד - chapter_receive_mishnayot_select
+<a id="מערכת-חלוקת-משניות-כולל-שמיעת-המשניות-מ4-קריינים-ודוחות-לימוד-chapter_receive_mishnayot_select"></a><a id="topic-102"></a><a id="post-133"></a>
+
 מערכת חלוקת משניות, כולל שמיעת המשניות ב4 אפשרויות, כולל דו"ח של המשתמש שסיים ללמוד
 
 יצויין כי המודול לא ממש נעול ויתכנו בו עוד שינויים
 
+```ini
 type=chapter_receive_mishnayot_select
+```
 
 לטובת אלו שרוצים להכנס גם מהטלפון שלהם וגם מטלפון אחר ולהגדיר את הכניסה באמצעות הטלפון שלהם ניתן להגדיר
 
+```ini
 enter_id=yes
 enter_id_type=phone_or_enter_phone
+```
 
 לאחר הכניסה יש תפריט
 
@@ -27,8 +34,10 @@ M1894 "לקבלת מסכת ללימוד הקישו 1
 
 ניתן להגדיר ניתןק או מעבר לשלוחה אחרת
 
+```ini
 chapter_receive_mishnayot_select_end_goto=hangup
 chapter_receive_mishnayot_select_end_goto=/5/8
+```
 
 דוחות לאיימיל
 
@@ -36,7 +45,9 @@ chapter_receive_mishnayot_select_end_goto=/5/8
 
 להלן המלל ברירת מחדל למיילים:
 
+```ini
 chapter_receive_mishnayot_select_log.ini
+```
 
 chapter_receive_mishnayot_select_log=דו"ח משניות שסימו את הלימוד בהצלחה
 
@@ -84,7 +95,9 @@ Select=נבחר
 
 Learn=נלמד
 
+```ini
 chapter_receive_mishnayot_select_log.ini
+```
 
 chapter_receive_mishnayot_select_log=דו"ח משניות שנבחרו ללימוד
 

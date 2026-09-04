@@ -1,6 +1,11 @@
+# מודול כמות חברים פעילים members_active
+<a id="מודול-כמות-חברים-פעילים-members_active"></a><a id="topic-108"></a><a id="post-139"></a>
+
 מודול כמות חברים פעילים
 
+```ini
 type=members_active
+```
 
 השבוע היה ארוע של אחד מהחסידויות הגדולות בארץ,
 
@@ -26,8 +31,10 @@ type=members_active
 
 כמובן ניתן לשנות את סוג הכניסה לכל אחד מסוגי הכניסה
 
+```ini
 enter_id=yes
 enter_id_type=digits
+```
 
 או כל סוג כניסה אחר
 
@@ -39,8 +46,10 @@ enter_id_type=digits
 
 ניתן להגדיר
 
+```ini
 enter_id=yes
 delete_id_exit=yes
+```
 
 קובץ שיוך קבוצה
 
@@ -48,8 +57,11 @@ delete_id_exit=yes
 
 מספר זיהוי = מספר קבוצה
 
+```ini
 MembersGroup.ini
+```
 
+```ini
 1234=01
 1235=01
 1236=01
@@ -59,6 +71,7 @@ MembersGroup.ini
 3456=03
 3457=03
 3458=03
+```
 
 בדוגמא כאן רואים שזיהוי 1234 וכן 1235 וכן 1236 משוייכים לקבוצה 01
 
@@ -70,10 +83,14 @@ MembersGroup.ini
 
 אם ברצונכם שהלקוח ישמע את שם הקבוצה ניתן להגדיר קובץ עם שמות הקבוצה
 
+```ini
 MembersGroupName.ini
+```
 
+```ini
 01=קבוצה  מספר אחת, הקבוצה של גרשון
 02=קבוצה מספר שתים, הקבוצה של ידידיה
+```
 
 במקרה שהמערכת מצאה שם לקבוצה אז המערכת תודיע
 
@@ -87,8 +104,10 @@ MembersGroupName.ini
 
 כאשר כמו כל מקום שיש מנוע TTS ניתן ניתן לשנות את מהירות הדיבור
 
+```ini
 rate=-10
 rate=10
+```
 
 מינוס 10 זה הכי לאט שאפשר, ו10 זה הכי מהר שאפשר, ברירת מחדל זה 0
 
@@ -98,19 +117,25 @@ rate=10
 
 ניתן לשנות לקולשל אשה - סיוון או סיוון 3
 
+```ini
 voice=Gilad
 voice=Sivan
 voice=Sivan3
+```
 
 רשימת החברים הפעילים
 
+```ini
 MembersActive.ini
+```
 
+```ini
 1234=yes
 1236=yes
 2345=yes
 2347=yes
 3456=yes
+```
 
 בדוגמא כאן אם זיהוי 1236 שמשוייך לקובצה 01 יכנס,
 
@@ -126,10 +151,12 @@ MembersActive.ini
 
 ולכן הוספנו במודול הכנסת נתונים אפשרות שהיא כללית עבור כל המערכת, אבל משמשת בצורה ישירה לכאן
 
+```ini
 type=recording_and_entering_data
 enter_id=yes
 enter_id_type=כל סוג שמתאים לכם
 recording_and_entering_ok_add_to_file_enter_id=/8/7/MembersActive
+```
 
 בסיום הכנסה בהצלחה במודול הכנסת נתונים
 
@@ -139,11 +166,11 @@ recording_and_entering_ok_add_to_file_enter_id=/8/7/MembersActive
 
 /8/7/
 
-בתוך קובץ MembersActive.ini
+בתוך קובץ `MembersActive.ini`
 
 את הערך
 
-1236=yes
+`1236=yes`
 
 וככה תוך כדי שהמערכת פעילה, החברים יכולים להתעדכן כמה כבר עוד נהיו פעילים
 
@@ -159,7 +186,9 @@ recording_and_entering_ok_add_to_file_enter_id=/8/7/MembersActive
 
 ילקחו מתיקיה אחרת ניתן להגדיר
 
+```ini
 members_active_dir=/5/8
+```
 
 בדוגמא כאן המערכת תחפש את שלשת הקבצים בתיקיה /5/8
 
@@ -167,20 +196,26 @@ members_active_dir=/5/8
 
 אם ברצונכם שישמעו את הכמות בלבד אבל לא את הרשימה של הלא פעילים ניתן להגדיר
 
+```ini
 members_active_say_not_exists=no
+```
 
 ברירת מחדל משמיע את רשימת החברים הפעילים
 
 אם ברצונכם שישמעו את הכמות אבל לא את הרשימה של הפעילים ניתן להגדיר
 
+```ini
 members_active_say_exists=no
+```
 
 בסיום השלוחה, לאחר ההשמעה, ברירת מחדל חוזר שלב אחד למעלה,
 
 אם ברצונכם שיעבור למקום אחר ניתן להגדיר לנתק או לעבור לשלוחה אחרת
 
+```ini
 members_active_end_goto=hangup
 members_active_end_goto=/5/8
+```
 
 בדוגמא הראשונה המערכת תנתק, בדוגמא השניה המערכת תעבור לשלוחה/5/8
 
