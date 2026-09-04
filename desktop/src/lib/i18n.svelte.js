@@ -7,6 +7,7 @@
  *   3. Done — the language picker and interface direction adapt automatically.
  */
 
+/** @type {Record<string, {code: string, nativeName: string, flag: string, dir: string, strings: Record<string, string>}>} */
 export const LOCALES = {
   he: {
     code: "he",
@@ -28,9 +29,13 @@ export const LOCALES = {
       provider_gemini: "Google Gemini (מומלץ)",
       provider_openai: "OpenAI (ChatGPT)",
       provider_groq: "Groq (מהיר במיוחד)",
+      provider_claude: "Anthropic Claude (מומלץ לסוכן)",
       model_label: "מודל AI",
       model_regular: "מודל רגיל (מהיר, פחות מורכב)",
       model_pro: "מודל Pro (מעמיק ומדויק ביותר)",
+      model_small_recent: "מודל קטן עדכני",
+      model_claude_regular: "Sonnet 5 (מומלץ)",
+      model_claude_pro: "Opus 5",
       token_label: "טוקן ימות המשיח",
       get_token: "קבלת טוקן חדש",
       clear_token: "מחיקת הטוקן השמור",
@@ -82,9 +87,15 @@ export const LOCALES = {
       preset_menu: "תפריט בחירה",
       preset_play: "השמעת קבצים",
       preset_record: "קבלת הקלטה",
-      preset_menu_prompt: "הגדר שלוחה 1 כתפריט בחירה ראשי עם מעבר לשלוחות 1, 2 ו-3",
-      preset_play_prompt: "הגדר שלוחה 2 להשמעת קבצים עם אפשרות דילוג וחזרה",
-      preset_record_prompt: "הגדר שלוחה 3 לקבלת נתונים והקלטה מהמאזין עם שליחה למייל",
+      preset_human: "מענה אנושי",
+      preset_menu_prompt:
+        "הגדר שלוחה 1 כתפריט ראשי: הקשה 1 מעבירה לשלוחת השמעת שיעורים, 2 להשארת הודעה, 3 לניתוב למענה אנושי. אם לא הוקשה בחירה תוך 5 שניות - חזרה על התפריט.",
+      preset_play_prompt:
+        "הגדר שלוחה 2 להשמעת שיעורים מהחדש לישן, עם מקשי דילוג קדימה ואחורה, חזרה על הקובץ, והשמעת שם הקובץ לפני כל שיעור.",
+      preset_record_prompt:
+        "הגדר שלוחה 3 לקבלת הודעה מהמאזין: קודם שאל את שמו ומספר הטלפון שלו, אחר כך הקלט את ההודעה, ושלח את ההקלטה למייל.",
+      preset_human_prompt:
+        "הגדר שלוחה 4 לניתוב למענה אנושי בימים א-ה בין 9:00 ל-16:00, ומחוץ לשעות אלה השמע הודעה על שעות הפעילות והעבר להשארת הודעה.",
 
       processing: "מעבד בקשה...",
       submit: "שגר עדכון לשלוחה 🚀",
@@ -131,7 +142,63 @@ export const LOCALES = {
       no_actions_selected: "לא נבחרו פעולות לביצוע",
       executing_actions: "מבצע {count} פעולות מול ימות המשיח...",
       actions_done: "הסתיים! בוצעו {done} מתוך {total} פעולות.",
-      file_load_error: "שגיאה בטעינת הקובץ: {error}"
+      file_load_error: "שגיאה בטעינת הקובץ: {error}",
+
+      // ----- Agent run (direct mode) -----
+      auto_apply_label: "החל שינויים אוטומטית (ללא אישור)",
+      auto_apply_warning: "אזהרה: הפעולות יבוצעו מיד במערכת ללא תצוגה מקדימה ואישור.",
+      include_tree_label: "צרף את עץ השלוחות לבקשה",
+      include_tree_hint: "מוסיף תמונת מצב קצרה של השלוחות הקיימות כדי לשפר את דיוק המודל.",
+
+      agent_panel_title: "מהלך העבודה",
+      agent_turn_header: "שלב {turn} מתוך {max}",
+      agent_starting: "מפעיל את הסוכן...",
+      agent_started_with: "הסוכן פועל · {provider} · {model}",
+      agent_cancel: "עצור ריצה",
+      agent_cancelling: "מבטל את הריצה...",
+      agent_cancelled: "הריצה בוטלה",
+      agent_retry_notice: "המודל עמוס, מנסה שוב ({attempt}/{max})",
+      agent_thinking: "ממתין לתשובת המודל...",
+      agent_tool_running: "מבצע...",
+      agent_ms: "{ms} מ״ש",
+
+      agent_finish_title: "סיכום הריצה",
+      agent_finish_line: "עלות: ${cost} · מטמון: {cache}% · {turns} סבבים · {secs} שנ׳",
+      agent_finish_line_no_cost: "מטמון: {cache}% · {turns} סבבים · {secs} שנ׳",
+      agent_stop_end_turn: "הסתיים",
+      agent_stop_max_turns: "הופסק — הגעה למספר הסבבים המרבי",
+      agent_stop_cancelled: "בוטל ע״י המשתמש",
+      agent_stop_error: "הסתיים בשגיאה",
+      agent_stop_truncated: "התשובה נקטעה",
+      agent_stop_refusal: "המודל סירב לבצע את הבקשה",
+      agent_error_title: "שגיאה בריצת הסוכן",
+      agent_session_expired:
+        "החיבור לימות המשיח פג. יש להתחבר מחדש (אימות דו-שלבי) ולהריץ את הבקשה מחדש.",
+
+      agent_actions_title: "📋 פעולות שהסוכן מציע",
+      agent_actions_hint: "סמן את הפעולות לאישור. הבדיקה מציגה את הערך הנוכחי מול הערך החדש.",
+      approve_selected: "בצע את הפעולות שנבחרו",
+      applying_actions: "מבצע את הפעולות שנבחרו...",
+      will_be_created: "תיווצר",
+      risk_low: "סיכון נמוך",
+      risk_overwrite: "דריסת ערכים קיימים",
+      risk_destructive: "פעולה הרסנית",
+      show_diff: "הצג שינויים",
+      hide_diff: "הסתר שינויים",
+      diff_key: "מפתח",
+      diff_before: "ערך נוכחי",
+      diff_after: "ערך חדש",
+      diff_empty: "אין ערך",
+      no_diff: "אין שינויים להצגה",
+      warnings_title: "אזהרות",
+      action_ok: "בוצע",
+      action_failed: "נכשל",
+      param_applied: "עודכן",
+      param_not_applied: "לא עודכן",
+      results_title: "תוצאות הביצוע",
+      kind_set_params: "עדכון פרמטרים",
+      kind_upload_file: "העלאת קובץ טקסט",
+      no_run_id: "אין ריצה פעילה"
     }
   },
   en: {
@@ -154,9 +221,13 @@ export const LOCALES = {
       provider_gemini: "Google Gemini (recommended)",
       provider_openai: "OpenAI (ChatGPT)",
       provider_groq: "Groq (extra fast)",
+      provider_claude: "Anthropic Claude (recommended for the agent)",
       model_label: "AI model",
       model_regular: "Regular model (fast, less complex)",
       model_pro: "Pro model (deepest & most accurate)",
+      model_small_recent: "Small up-to-date model",
+      model_claude_regular: "Sonnet 5 (recommended)",
+      model_claude_pro: "Opus 5",
       token_label: "Yemot HaMashiach token",
       get_token: "Get new token",
       clear_token: "Clear saved token",
@@ -208,9 +279,15 @@ export const LOCALES = {
       preset_menu: "Choice menu",
       preset_play: "Play files",
       preset_record: "Receive recording",
-      preset_menu_prompt: "Set extension 1 as a main selection menu with routing to extensions 1, 2 and 3",
-      preset_play_prompt: "Set extension 2 to play files with skip and replay options",
-      preset_record_prompt: "Set extension 3 to receive data and a recording from the caller with email delivery",
+      preset_human: "Human answering",
+      preset_menu_prompt:
+        "Set extension 1 as the main menu: pressing 1 goes to the lessons playback extension, 2 leaves a message, 3 routes to a human operator. If no key is pressed within 5 seconds - repeat the menu.",
+      preset_play_prompt:
+        "Set extension 2 to play lessons from newest to oldest, with forward and backward skip keys, repeat of the current file, and announcing the file name before each lesson.",
+      preset_record_prompt:
+        "Set extension 3 to take a message from the caller: first ask for their name and phone number, then record the message, and send the recording by email.",
+      preset_human_prompt:
+        "Set extension 4 to route to a human operator Sunday to Thursday between 9:00 and 16:00; outside those hours play a message with the opening hours and transfer to leaving a message.",
 
       processing: "Processing request...",
       submit: "Launch extension update 🚀",
@@ -257,7 +334,63 @@ export const LOCALES = {
       no_actions_selected: "No actions selected",
       executing_actions: "Executing {count} actions against Yemot HaMashiach...",
       actions_done: "Done! {done} of {total} actions were executed.",
-      file_load_error: "Failed to load file: {error}"
+      file_load_error: "Failed to load file: {error}",
+
+      // ----- Agent run (direct mode) -----
+      auto_apply_label: "Apply changes automatically (no approval)",
+      auto_apply_warning: "Warning: actions run against the system immediately, with no preview or approval.",
+      include_tree_label: "Attach the extension tree to the request",
+      include_tree_hint: "Adds a short snapshot of the existing extensions to improve the model's accuracy.",
+
+      agent_panel_title: "Run progress",
+      agent_turn_header: "Step {turn} of {max}",
+      agent_starting: "Starting the agent...",
+      agent_started_with: "Agent running · {provider} · {model}",
+      agent_cancel: "Stop run",
+      agent_cancelling: "Cancelling the run...",
+      agent_cancelled: "Run cancelled",
+      agent_retry_notice: "The model is busy, retrying ({attempt}/{max})",
+      agent_thinking: "Waiting for the model's response...",
+      agent_tool_running: "Running...",
+      agent_ms: "{ms} ms",
+
+      agent_finish_title: "Run summary",
+      agent_finish_line: "Cost: ${cost} · cache: {cache}% · {turns} turns · {secs}s",
+      agent_finish_line_no_cost: "Cache: {cache}% · {turns} turns · {secs}s",
+      agent_stop_end_turn: "Finished",
+      agent_stop_max_turns: "Stopped — maximum number of turns reached",
+      agent_stop_cancelled: "Cancelled by the user",
+      agent_stop_error: "Finished with an error",
+      agent_stop_truncated: "The response was truncated",
+      agent_stop_refusal: "The model refused to perform the request",
+      agent_error_title: "Agent run error",
+      agent_session_expired:
+        "The Yemot HaMashiach session expired. Please sign in again (two-factor) and re-run the request.",
+
+      agent_actions_title: "📋 Actions proposed by the agent",
+      agent_actions_hint: "Mark the actions to approve. The diff shows the current value against the new one.",
+      approve_selected: "Run the selected actions",
+      applying_actions: "Running the selected actions...",
+      will_be_created: "will be created",
+      risk_low: "Low risk",
+      risk_overwrite: "Overwrites existing values",
+      risk_destructive: "Destructive action",
+      show_diff: "Show changes",
+      hide_diff: "Hide changes",
+      diff_key: "Key",
+      diff_before: "Current value",
+      diff_after: "New value",
+      diff_empty: "no value",
+      no_diff: "No changes to show",
+      warnings_title: "Warnings",
+      action_ok: "Done",
+      action_failed: "Failed",
+      param_applied: "updated",
+      param_not_applied: "not updated",
+      results_title: "Execution results",
+      kind_set_params: "Update parameters",
+      kind_upload_file: "Upload text file",
+      no_run_id: "No active run"
     }
   }
 };
@@ -292,6 +425,9 @@ function currentLocale() {
 /**
  * Translate a key in the current language (falls back to the default
  * language, then to the key itself). Supports {param} interpolation.
+ * @param {string} key
+ * @param {Record<string, unknown>} [params]
+ * @returns {string}
  */
 export function t(key, params) {
   let text =
@@ -319,7 +455,10 @@ export function applyDocumentDirection() {
   document.documentElement.dir = loc.dir;
 }
 
-/** Switch language, persist the choice and update direction. */
+/**
+ * Switch language, persist the choice and update direction.
+ * @param {string} code
+ */
 export function setLocale(code) {
   if (!LOCALES[code]) return;
   i18n.locale = code;

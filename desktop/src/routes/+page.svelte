@@ -1,6 +1,7 @@
 <script>
-  import { onMount, tick } from "svelte";
+  import { onMount, onDestroy, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { marked } from "marked";
   import { t, i18n, isRTL, setLocale, availableLocales } from "$lib/i18n.svelte.js";
@@ -15,7 +16,7 @@
 
   // State (Svelte 5 Runes)
   let targetMode = $state("direct"); // "direct" | "script" — default: direct (persisted locally)
-  let aiProvider = $state("gemini"); // "gemini" | "openai" | "groq" | "custom"
+  let aiProvider = $state("gemini"); // "claude" | "gemini" | "openai" | "groq" | "custom"
   let modelType = $state("regular"); // "regular" | "pro" (script mode)
   // Direct mode model selection: from a known list, or manually entered ID
   let modelSource = $state("list"); // "list" | "manual"
@@ -32,9 +33,14 @@
   let scriptUrl = $state("https://script.google.com/macros/s/AKfycbz_REPLACE_ME/exec");
 
   // Known model list per direct provider (first two are the classic Regular/Pro).
-  // tag = optional i18n key appended to the label.
-  /** @type {Record<string, {id: string, tag?: string}[]>} */
+  // tag = optional i18n key appended to the label; label = i18n key replacing the raw id.
+  /** @type {Record<string, {id: string, tag?: string, label?: string}[]>} */
   const PROVIDER_MODELS = {
+    // Claude uses the contract aliases ("regular" / "pro"); Rust maps them to real model ids.
+    claude: [
+      { id: "regular", label: "model_claude_regular" },
+      { id: "pro", label: "model_claude_pro" },
+    ],
     gemini: [
       { id: "gemini-2.5-flash", tag: "model_regular" },
       { id: "gemini-2.5-pro", tag: "model_pro" },
@@ -44,11 +50,11 @@
       { id: "gemini-1.5-pro" },
     ],
     openai: [
-      { id: "gpt-4o-mini", tag: "model_regular" },
-      { id: "gpt-4o", tag: "model_pro" },
-      { id: "gpt-4.1" },
-      { id: "gpt-4.1-mini" },
+      { id: "gpt-4.1-mini", tag: "model_small_recent" },
+      { id: "gpt-4.1", tag: "model_pro" },
       { id: "gpt-4.1-nano" },
+      { id: "gpt-4o-mini" },
+      { id: "gpt-4o" },
       { id: "o4-mini" },
     ],
     groq: [
@@ -61,15 +67,51 @@
     ],
   };
 
+  // Agent-run settings (direct mode)
+  let autoApply = $state(false); // true = mutating tools run immediately, no approval step
+  let includeTree = $state(true); // append the "[מצב נוכחי]" root tree to the first user message
+
   // Status & Progress
   let isLoading = $state(false);
   let statusMessage = $state("");
   let errorMessage = $state("");
   let resultOutput = $state("");
+  /** @type {any[]} */
   let parsedActions = $state([]);
+  /** Per-param outcomes of the last script-mode execution, grouped by path. */
+  /** @type {any[]} */
+  let scriptActionResults = $state([]);
+
+  // ----- Agent run state (direct mode) -----
+  /** @type {string | null} */
+  let runId = $state(null);
+  let agentStarting = $state(false); // a start_agent_run call is in flight (run_id not known yet)
+  let agentRunning = $state(false);
+  let agentCancelling = $state(false);
+  let agentTurn = $state(0);
+  let agentMaxTurns = $state(0);
+  /** Ordered timeline of the current run. */
+  /** @type {any[]} */
+  let agentTimeline = $state([]);
+  /** @type {any} */
+  let agentRetryNotice = $state(null);
+  /** @type {any} */
+  let agentFinish = $state(null);
+  /** @type {any} */
+  let agentError = $state(null);
+  /** Proposed actions awaiting approval (agent mode). */
+  /** @type {any[]} */
+  let proposedActions = $state([]);
+  /** action_id -> ActionApplyResult */
+  /** @type {Record<string, any>} */
+  let actionResults = $state({});
+  /** Unlisten callbacks for the active agent subscription. */
+  /** @type {Array<() => void>} */
+  let agentUnlisteners = [];
 
   // Token verification status
-  let tokenStatus = $state(null); // null | { valid: bool, message: string }
+  /** @type {{valid: boolean, message: string} | null} */
+  let tokenStatus = $state(null);
 
   // Login (create token) state
   let showLoginModal = $state(false);
@@ -78,6 +120,7 @@
   let loginShowPassword = $state(false);
   let loginToken = $state("");
   let loginStep = $state("credentials"); // "credentials" | "mfa"
+  /** @type {any[]} */
   let loginMethods = $state([]);
   let loginMethodId = $state("");
   let loginSendType = $state("");
@@ -88,15 +131,22 @@
   let loginLoading = $state(false);
 
   // Knowledge Explorer
+  /** @type {any[]} */
   let knowledgeFiles = $state([]);
   let searchQuery = $state("");
+  /** @type {string | null} */
   let selectedFileContent = $state(null);
   let selectedFileName = $state("");
   let showKnowledgeModal = $state(false);
   let isRawView = $state(false);
   let copyFeedback = $state(false);
+  /** @type {HTMLElement | null} */
   let contentContainerRef = $state(null);
 
+  /**
+   * @param {string | null} content
+   * @returns {string}
+   */
   function preprocessMarkdown(content) {
     if (!content) return "";
     return content.replace(/\[([^\]]+)\]\(([^)\n]+)\)/g, (match, text, href) => {
@@ -120,6 +170,7 @@
   });
 
   // GitHub Update info
+  /** @type {any} */
   let updateInfo = $state(null);
 
   // MFA State
@@ -147,9 +198,16 @@
       }
 
       const savedProvider = localStorage.getItem("ai_yemot_provider");
-      if (savedProvider && ["gemini", "openai", "groq", "custom"].includes(savedProvider)) {
+      if (savedProvider && ["claude", "gemini", "openai", "groq", "custom"].includes(savedProvider)) {
         aiProvider = savedProvider;
       }
+
+      // Agent-run settings (contract keys: autoApply / includeTree)
+      const savedAutoApply = localStorage.getItem("autoApply");
+      if (savedAutoApply !== null) autoApply = savedAutoApply === "true";
+
+      const savedIncludeTree = localStorage.getItem("includeTree");
+      if (savedIncludeTree !== null) includeTree = savedIncludeTree === "true";
 
       const savedModelSource = localStorage.getItem("ai_yemot_model_source");
       if (savedModelSource === "list" || savedModelSource === "manual") {
@@ -197,6 +255,16 @@
       localStorage.setItem("ai_yemot_selected_model", selectedModel);
       localStorage.setItem("ai_yemot_custom_model", customModel);
       localStorage.setItem("ai_yemot_custom_base_url", customBaseUrl);
+      localStorage.setItem("autoApply", String(autoApply));
+      localStorage.setItem("includeTree", String(includeTree));
+    } catch (_) {}
+  }
+
+  // Persist the agent toggles as soon as they change (they live outside the submit flow).
+  function saveAgentToggles() {
+    try {
+      localStorage.setItem("autoApply", String(autoApply));
+      localStorage.setItem("includeTree", String(includeTree));
     } catch (_) {}
   }
 
@@ -216,7 +284,7 @@
   /**
    * Known models for a provider (empty for a custom provider).
    * @param {string} provider
-   * @returns {{id: string, tag?: string}[]}
+   * @returns {{id: string, tag?: string, label?: string}[]}
    */
   function getProviderModels(provider) {
     return PROVIDER_MODELS[provider] || [];
@@ -308,6 +376,426 @@
     }
   }
 
+  // ============================================================
+  //  Agent run (direct mode) — see docs/agent-contract.md
+  // ============================================================
+
+  /**
+   * @param {any} value
+   * @returns {string}
+   */
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;");
+  }
+
+  // Technical tokens (ivr2 paths, /1/2 paths, file names, key=value) must stay LTR
+  // even inside a right-to-left sentence — wrap each one in <bdi dir="ltr">.
+  const TECHNICAL_TOKEN_RE =
+    /(ivr2:\/[^\s,;]*|\/\d+(?:\/\d+)*|[A-Za-z0-9_.-]+\.(?:wav|txt|ini|mp3|json)|[A-Za-z_][A-Za-z0-9_]{1,}=[^\s,;]+)/g;
+
+  /**
+   * Escape a technical string and isolate its LTR tokens for RTL layouts.
+   * @param {any} text
+   * @returns {string}
+   */
+  function ltrify(text) {
+    return escapeHtml(text).replace(
+      TECHNICAL_TOKEN_RE,
+      (m) => `<bdi dir="ltr">${m}</bdi>`
+    );
+  }
+
+  /**
+   * Render an assistant text block through the existing markdown pipeline.
+   * @param {string} text
+   * @returns {string}
+   */
+  function renderAgentMarkdown(text) {
+    if (!text) return "";
+    try {
+      return /** @type {string} */ (marked.parse(preprocessMarkdown(text)));
+    } catch (e) {
+      console.error("Markdown parse error:", e);
+      return escapeHtml(text);
+    }
+  }
+
+  /**
+   * Accept an event only if it belongs to the run currently displayed.
+   * Adopts the run id of the first event when start_agent_run has not returned yet.
+   * @param {any} payload
+   */
+  function isCurrentRun(payload) {
+    if (!payload || !payload.run_id) return false;
+    if (runId) return payload.run_id === runId;
+    if (agentStarting) {
+      runId = payload.run_id;
+      return true;
+    }
+    return false;
+  }
+
+  /** Drop every active agent:* subscription. */
+  function teardownAgentListeners() {
+    for (const un of agentUnlisteners) {
+      try {
+        un();
+      } catch (_) {}
+    }
+    agentUnlisteners = [];
+  }
+
+  /** Clear the panel state before a new run. */
+  function resetAgentRun() {
+    teardownAgentListeners();
+    runId = null;
+    agentRunning = false;
+    agentCancelling = false;
+    agentTurn = 0;
+    agentMaxTurns = 0;
+    agentTimeline = [];
+    agentRetryNotice = null;
+    agentFinish = null;
+    agentError = null;
+    proposedActions = [];
+    actionResults = {};
+  }
+
+  /**
+   * @param {any} item
+   */
+  function pushTimeline(item) {
+    agentTimeline = [...agentTimeline, item];
+  }
+
+  /**
+   * Map a ProposedAction from the contract onto a selectable UI row.
+   * @param {any} action
+   */
+  function toActionRow(action) {
+    return {
+      id: action.id,
+      tool_use_id: action.tool_use_id ?? null,
+      kind: action.kind ?? "set_extension_params",
+      path: action.path ?? "",
+      params: Array.isArray(action.params) ? action.params : [],
+      reason: action.reason ?? "",
+      risk: action.risk ?? "low",
+      exists: action.exists !== false,
+      diff: Array.isArray(action.diff) ? action.diff : [],
+      warnings: Array.isArray(action.warnings) ? action.warnings : [],
+      selected: true,
+      expanded: false
+    };
+  }
+
+  /** Register every agent:* listener for the run about to start. */
+  async function setupAgentListeners() {
+    teardownAgentListeners();
+
+    /** @type {Array<Promise<() => void>>} */
+    const subs = [];
+
+    subs.push(
+      listen("agent:started", (event) => {
+        const p = /** @type {any} */ (event.payload);
+        if (!isCurrentRun(p)) return;
+        agentRunning = true;
+        statusMessage = t("agent_started_with", {
+          provider: p.provider ?? "",
+          model: p.model ?? ""
+        });
+      })
+    );
+
+    subs.push(
+      listen("agent:turn_start", (event) => {
+        const p = /** @type {any} */ (event.payload);
+        if (!isCurrentRun(p)) return;
+        agentTurn = p.turn ?? 0;
+        agentMaxTurns = p.max_turns ?? 0;
+        agentRetryNotice = null;
+        pushTimeline({ type: "turn", turn: p.turn, max: p.max_turns });
+      })
+    );
+
+    subs.push(
+      listen("agent:assistant_text", (event) => {
+        const p = /** @type {any} */ (event.payload);
+        if (!isCurrentRun(p)) return;
+        if (!p.text) return;
+        pushTimeline({ type: "text", turn: p.turn, text: p.text });
+      })
+    );
+
+    subs.push(
+      listen("agent:text_delta", (event) => {
+        const p = /** @type {any} */ (event.payload);
+        if (!isCurrentRun(p)) return;
+        if (!p.delta) return;
+        const last = agentTimeline[agentTimeline.length - 1];
+        if (last && last.type === "text" && last.streaming) {
+          last.text += p.delta;
+          agentTimeline = [...agentTimeline];
+        } else {
+          pushTimeline({ type: "text", turn: agentTurn, text: p.delta, streaming: true });
+        }
+      })
+    );
+
+    subs.push(
+      listen("agent:tool_started", (event) => {
+        const p = /** @type {any} */ (event.payload);
+        if (!isCurrentRun(p)) return;
+        pushTimeline({
+          type: "tool",
+          tool_use_id: p.tool_use_id,
+          name: p.name ?? "",
+          label: p.label ?? p.name ?? "",
+          status: "running",
+          summary: "",
+          ms: null
+        });
+      })
+    );
+
+    subs.push(
+      listen("agent:tool_finished", (event) => {
+        const p = /** @type {any} */ (event.payload);
+        if (!isCurrentRun(p)) return;
+        const row = agentTimeline.find(
+          (item) => item.type === "tool" && item.tool_use_id === p.tool_use_id
+        );
+        if (row) {
+          row.status = p.ok ? "ok" : "failed";
+          row.summary = p.summary ?? "";
+          row.ms = p.ms ?? null;
+          agentTimeline = [...agentTimeline];
+        }
+      })
+    );
+
+    subs.push(
+      listen("agent:action_proposed", (event) => {
+        const p = /** @type {any} */ (event.payload);
+        if (!isCurrentRun(p) || !p.action) return;
+        if (proposedActions.some((a) => a.id === p.action.id)) return;
+        proposedActions = [...proposedActions, toActionRow(p.action)];
+      })
+    );
+
+    subs.push(
+      listen("agent:actions_proposed", (event) => {
+        const p = /** @type {any} */ (event.payload);
+        if (!isCurrentRun(p)) return;
+        const list = Array.isArray(p.actions) ? p.actions : [];
+        proposedActions = list.map(toActionRow);
+      })
+    );
+
+    subs.push(
+      listen("agent:action_applied", (event) => {
+        const p = /** @type {any} */ (event.payload);
+        if (!isCurrentRun(p) || !p.action_id) return;
+        actionResults = {
+          ...actionResults,
+          [p.action_id]: {
+            action_id: p.action_id,
+            ok: !!p.ok,
+            message: p.message ?? "",
+            params: Array.isArray(p.params) ? p.params : []
+          }
+        };
+      })
+    );
+
+    subs.push(
+      listen("agent:retry", (event) => {
+        const p = /** @type {any} */ (event.payload);
+        if (!isCurrentRun(p)) return;
+        agentRetryNotice = {
+          attempt: p.attempt ?? 1,
+          max: p.max ?? 1,
+          reason: p.reason ?? "",
+          wait_ms: p.wait_ms ?? 0
+        };
+        pushTimeline({ type: "retry", attempt: p.attempt, max: p.max, reason: p.reason });
+      })
+    );
+
+    subs.push(
+      listen("agent:finished", (event) => {
+        const p = /** @type {any} */ (event.payload);
+        if (!isCurrentRun(p)) return;
+        agentRunning = false;
+        agentCancelling = false;
+        agentRetryNotice = null;
+        isLoading = false;
+        agentFinish = {
+          ok: !!p.ok,
+          stop: p.stop ?? "end_turn",
+          final_text: p.final_text ?? "",
+          usage: p.usage ?? null
+        };
+        if (p.final_text) resultOutput = p.final_text;
+        statusMessage = p.ok ? t("request_success") : agentStopLabel(p.stop);
+      })
+    );
+
+    subs.push(
+      listen("agent:error", (event) => {
+        const p = /** @type {any} */ (event.payload);
+        if (!isCurrentRun(p)) return;
+        agentRunning = false;
+        agentCancelling = false;
+        isLoading = false;
+        statusMessage = "";
+        agentError = { code: p.code ?? "internal", message: p.message ?? "" };
+        if (p.code === "session_expired") {
+          // The Yemot session died mid-run: re-authenticate, then re-run manually.
+          errorMessage = t("agent_session_expired");
+          openLoginModal();
+          loginError = t("agent_session_expired");
+        } else {
+          errorMessage = p.message || t("request_failed");
+        }
+      })
+    );
+
+    agentUnlisteners = await Promise.all(subs);
+  }
+
+  /**
+   * @param {string} stop
+   */
+  function agentStopLabel(stop) {
+    switch (stop) {
+      case "end_turn":
+        return t("agent_stop_end_turn");
+      case "max_turns":
+        return t("agent_stop_max_turns");
+      case "cancelled":
+        return t("agent_stop_cancelled");
+      case "truncated":
+        return t("agent_stop_truncated");
+      case "refusal":
+        return t("agent_stop_refusal");
+      default:
+        return t("agent_stop_error");
+    }
+  }
+
+  /** The "עלות: … · מטמון: … · n סבבים · t שנ׳" line. */
+  let agentFinishLine = $derived.by(() => {
+    const usage = agentFinish?.usage;
+    if (!usage) return "";
+    const secs = ((usage.elapsed_ms ?? 0) / 1000).toFixed(1);
+    const rawPct = usage.cache_hit_pct ?? 0;
+    const cache = Math.round(rawPct <= 1 ? rawPct * 100 : rawPct);
+    const turns = usage.turns ?? 0;
+    if (usage.cost_usd === null || usage.cost_usd === undefined) {
+      return t("agent_finish_line_no_cost", { cache, turns, secs });
+    }
+    const cost = Number(usage.cost_usd).toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+    return t("agent_finish_line", { cost, cache, turns, secs });
+  });
+
+  /** Start the agentic loop in Rust and subscribe to its events. */
+  /** @param {string} payloadModel */
+  async function startAgentRun(payloadModel) {
+    resetAgentRun();
+    await setupAgentListeners();
+
+    agentStarting = true;
+    agentRunning = true;
+    isLoading = true;
+    statusMessage = t("agent_starting");
+
+    try {
+      const payload = {
+        provider: aiProvider,
+        model: payloadModel,
+        prompt: promptText.trim(),
+        api_key: apiKey.trim(),
+        base_url: customBaseUrl.trim(),
+        yemot_token: yemotToken.trim(),
+        auto_apply: autoApply,
+        include_tree: includeTree
+      };
+      const started = await invoke("start_agent_run", { payload });
+      const id = /** @type {any} */ (started)?.run_id;
+      if (id && !runId) runId = id;
+    } catch (e) {
+      teardownAgentListeners();
+      agentRunning = false;
+      isLoading = false;
+      statusMessage = "";
+      errorMessage = t("comm_error", { error: e });
+    } finally {
+      agentStarting = false;
+    }
+  }
+
+  async function cancelAgentRun() {
+    if (!runId) return;
+    agentCancelling = true;
+    statusMessage = t("agent_cancelling");
+    try {
+      await invoke("cancel_agent_run", { runId });
+    } catch (e) {
+      console.error("cancel_agent_run failed:", e);
+      agentCancelling = false;
+    }
+  }
+
+  /** Approve and apply the checked ProposedActions. */
+  async function approveSelectedActions() {
+    const selected = proposedActions.filter((a) => a.selected);
+    if (selected.length === 0) {
+      alert(t("no_actions_selected"));
+      return;
+    }
+    if (!runId) {
+      errorMessage = t("no_run_id");
+      return;
+    }
+
+    isLoading = true;
+    statusMessage = t("applying_actions");
+    try {
+      const results = await invoke("approve_actions", {
+        runId,
+        actionIds: selected.map((a) => a.id)
+      });
+      const list = Array.isArray(results) ? results : [];
+      /** @type {Record<string, any>} */
+      const merged = { ...actionResults };
+      for (const r of list) {
+        if (r && r.action_id) merged[r.action_id] = r;
+      }
+      actionResults = merged;
+      const done = list.filter((r) => r && r.ok).length;
+      statusMessage = t("actions_done", { done, total: selected.length });
+    } catch (e) {
+      errorMessage = t("comm_error", { error: e });
+      statusMessage = "";
+    } finally {
+      isLoading = false;
+      if (logoutOnFinish) {
+        await localLogout();
+      }
+    }
+  }
+
+  onDestroy(() => {
+    teardownAgentListeners();
+  });
+
+  /** @param {SubmitEvent} event */
   async function handleSubmit(event) {
     event.preventDefault();
     if (!promptText.trim()) {
@@ -348,8 +836,17 @@
     errorMessage = "";
     resultOutput = "";
     parsedActions = [];
+    scriptActionResults = [];
+
+    // Direct mode is the agentic loop (Rust holds the token); script mode stays legacy.
+    if (targetMode === "direct") {
+      await startAgentRun(payloadModel);
+      return;
+    }
+
+    resetAgentRun();
     isLoading = true;
-    statusMessage = targetMode === "script" ? t("sending_to_script") : t("processing_ai");
+    statusMessage = t("sending_to_script");
 
     try {
       const payload = {
@@ -357,12 +854,11 @@
         provider: aiProvider,
         model: payloadModel,
         prompt: promptText.trim(),
-        token: yemotToken.trim(),
         api_key: apiKey.trim(),
         is_preview: isPreviewMode,
         logout: logoutOnFinish,
         script_url: scriptUrl.trim(),
-        base_url: targetMode === "direct" ? customBaseUrl.trim() : ""
+        base_url: ""
       };
 
       const res = await invoke("send_ai_request", { payload });
@@ -386,6 +882,7 @@
     }
   }
 
+  /** @param {string} raw */
   function parseActionList(raw) {
     // Try parsing as JSON array
     try {
@@ -455,22 +952,46 @@
 
     isLoading = true;
     statusMessage = t("executing_actions", { count: selected.length });
-    let successCount = 0;
+    scriptActionResults = [];
 
+    // One UpdateExtension call per extension: group the parsed key/value pairs by path.
+    /** @type {Map<string, {key: string, value: string}[]>} */
+    const groups = new Map();
     for (const act of selected) {
+      const path = act.path || "";
+      const bucket = groups.get(path);
+      if (bucket) bucket.push({ key: act.key, value: act.value });
+      else groups.set(path, [{ key: act.key, value: act.value }]);
+    }
+
+    let successCount = 0;
+    /** @type {any[]} */
+    const results = [];
+
+    for (const [path, params] of groups) {
       try {
-        const res = await invoke("execute_yemot_action", {
-          token: yemotToken.trim(),
-          path: act.path,
-          key: act.key,
-          value: act.value
-        });
-        if (res.success) successCount++;
+        const res = /** @type {any} */ (
+          await invoke("execute_yemot_actions", {
+            token: yemotToken.trim(),
+            path,
+            params
+          })
+        );
+        const ok = res?.success ?? res?.ok ?? false;
+        const outcomes = Array.isArray(res?.params)
+          ? res.params
+          : Array.isArray(res?.results)
+            ? res.results
+            : [];
+        if (ok) successCount += params.length;
+        results.push({ path, ok, message: res?.message ?? "", params: outcomes });
       } catch (e) {
         console.error("Action failed:", e);
+        results.push({ path, ok: false, message: String(e), params: [] });
       }
     }
 
+    scriptActionResults = results;
     isLoading = false;
     statusMessage = t("actions_done", { done: successCount, total: selected.length });
     // Logout is performed locally — never via the script.
@@ -479,6 +1000,10 @@
     }
   }
 
+  /**
+   * @param {string} fileName
+   * @param {string | null} [targetAnchor]
+   */
   async function openKnowledgeFile(fileName, targetAnchor = null) {
     let cleanName = (fileName || "").trim();
     if (!cleanName) return;
@@ -509,6 +1034,7 @@
     }
   }
 
+  /** @param {string | null} targetId */
   function scrollToAnchor(targetId) {
     if (!contentContainerRef || !targetId) return;
     const cleanId = decodeURIComponent(targetId).replace(/^#/, "").trim();
@@ -539,10 +1065,11 @@
     }
 
     if (el) {
-      const targetEl =
-        el.tagName === "A" && el.textContent.trim() === "" && el.nextElementSibling
+      const targetEl = /** @type {HTMLElement} */ (
+        el.tagName === "A" && (el.textContent ?? "").trim() === "" && el.nextElementSibling
           ? el.nextElementSibling
-          : el;
+          : el
+      );
 
       targetEl.scrollIntoView({ behavior: "smooth", block: "start" });
       targetEl.classList.remove("target-highlight");
@@ -551,8 +1078,9 @@
     }
   }
 
+  /** @param {MouseEvent} e */
   async function handleContentClick(e) {
-    const anchor = e.target.closest("a");
+    const anchor = /** @type {HTMLElement} */ (e.target).closest("a");
     if (!anchor) return;
 
     const href = anchor.getAttribute("href");
@@ -613,6 +1141,7 @@
     }
   }
 
+  /** @param {string} promptKey */
   function setPreset(promptKey) {
     promptText = t(promptKey);
   }
@@ -649,6 +1178,7 @@
     showLoginModal = false;
   }
 
+  /** @param {string} token */
   function applyLoginToken(token) {
     yemotToken = token;
     try {
@@ -794,7 +1324,7 @@
         <!-- Language selector -->
         <select
           value={i18n.locale}
-          onchange={(e) => setLocale(e.target.value)}
+          onchange={(e) => setLocale(/** @type {HTMLSelectElement} */ (e.currentTarget).value)}
           aria-label={t("language")}
           title={t("language")}
           class="text-xs rounded-lg border border-slate-300 bg-white p-1.5 focus:ring-2 focus:ring-blue-500 focus:outline-none cursor-pointer"
@@ -867,6 +1397,7 @@
                 onchange={handleProviderChange}
                 class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white"
               >
+                <option value="claude">{t("provider_claude")}</option>
                 <option value="gemini">{t("provider_gemini")}</option>
                 <option value="openai">{t("provider_openai")}</option>
                 <option value="groq">{t("provider_groq")}</option>
@@ -918,7 +1449,7 @@
                   class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white"
                 >
                   {#each getProviderModels(aiProvider) as m}
-                    <option value={m.id}>{m.id}{m.tag ? ` — ${t(m.tag)}` : ""}</option>
+                    <option value={m.id}>{m.label ? t(m.label) : m.id}{m.tag ? ` — ${t(m.tag)}` : ""}</option>
                   {/each}
                 </select>
               {:else}
@@ -1050,6 +1581,42 @@
               <span>{t("logout_on_finish")}</span>
             </label>
           </div>
+
+          <!-- Agent-run settings (direct mode) -->
+          {#if targetMode === 'direct'}
+            <div class="border-t pt-4 space-y-3">
+              <div>
+                <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    bind:checked={autoApply}
+                    onchange={saveAgentToggles}
+                    class="rounded text-amber-600 focus:ring-amber-500"
+                  >
+                  <span class="font-medium">{t("auto_apply_label")}</span>
+                </label>
+                {#if autoApply}
+                  <p class="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2 mt-1.5 leading-relaxed">
+                    ⚠️ {t("auto_apply_warning")}
+                  </p>
+                {:else}
+                  <p class="text-[10px] text-slate-400 mt-1 leading-relaxed">{t("auto_apply_warning")}</p>
+                {/if}
+              </div>
+              <div>
+                <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    bind:checked={includeTree}
+                    onchange={saveAgentToggles}
+                    class="rounded text-blue-600 focus:ring-blue-500"
+                  >
+                  <span class="font-medium">{t("include_tree_label")}</span>
+                </label>
+                <p class="text-[10px] text-slate-400 mt-1 leading-relaxed">{t("include_tree_hint")}</p>
+              </div>
+            </div>
+          {/if}
         </div>
       </div>
 
@@ -1096,6 +1663,13 @@
               >
                 {t("preset_record")}
               </button>
+              <button
+                type="button"
+                onclick={() => setPreset("preset_human_prompt")}
+                class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1 rounded-lg transition"
+              >
+                {t("preset_human")}
+              </button>
             </div>
 
             {#if errorMessage}
@@ -1128,6 +1702,276 @@
             </div>
           </form>
         </div>
+
+        <!-- Agent Progress Panel (direct mode) -->
+        {#if agentTimeline.length > 0 || agentRunning || agentFinish || agentError}
+          <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-3">
+            <div class="flex items-center justify-between border-b pb-3">
+              <div class="flex items-center gap-2">
+                <h3 class="text-sm font-bold text-slate-800">{t("agent_panel_title")}</h3>
+                {#if agentMaxTurns > 0}
+                  <span class="text-[11px] bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full font-semibold">
+                    {t("agent_turn_header", { turn: agentTurn, max: agentMaxTurns })}
+                  </span>
+                {/if}
+              </div>
+              {#if agentRunning}
+                <button
+                  type="button"
+                  onclick={cancelAgentRun}
+                  disabled={agentCancelling}
+                  class="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-[11px] font-bold rounded-lg transition disabled:opacity-50"
+                >
+                  {agentCancelling ? t("agent_cancelling") : `⏹ ${t("agent_cancel")}`}
+                </button>
+              {/if}
+            </div>
+
+            <div class="space-y-2 max-h-[28rem] overflow-y-auto">
+              {#each agentTimeline as item, idx (idx)}
+                {#if item.type === "turn"}
+                  <div class="flex items-center gap-2 pt-2">
+                    <span class="text-[11px] font-bold text-slate-500">
+                      {t("agent_turn_header", { turn: item.turn, max: item.max })}
+                    </span>
+                    <span class="flex-1 h-px bg-slate-200"></span>
+                  </div>
+                {:else if item.type === "text"}
+                  <div class="agent-md text-xs text-slate-700 bg-slate-50 border border-slate-100 rounded-xl p-3 leading-relaxed">
+                    {@html renderAgentMarkdown(item.text)}
+                  </div>
+                {:else if item.type === "retry"}
+                  <div class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    🔁 {t("agent_retry_notice", { attempt: item.attempt, max: item.max })}
+                  </div>
+                {:else if item.type === "tool"}
+                  <div class="flex items-start gap-2 text-xs px-2 py-1.5 rounded-lg hover:bg-slate-50">
+                    <span class="mt-0.5 {item.status === 'running' ? 'animate-spin' : ''}">
+                      {item.status === "ok" ? "✓" : item.status === "failed" ? "✗" : "⏳"}
+                    </span>
+                    <div class="flex-1 min-w-0">
+                      <div class="font-medium {item.status === 'failed' ? 'text-rose-700' : 'text-slate-800'}">
+                        {@html ltrify(item.label)}
+                      </div>
+                      {#if item.summary}
+                        <div class="text-[11px] text-slate-500 mt-0.5 break-words">{@html ltrify(item.summary)}</div>
+                      {:else if item.status === "running"}
+                        <div class="text-[11px] text-slate-400 mt-0.5">{t("agent_tool_running")}</div>
+                      {/if}
+                    </div>
+                    {#if item.ms !== null && item.ms !== undefined}
+                      <span class="text-[10px] text-slate-400 shrink-0" dir="ltr">{t("agent_ms", { ms: item.ms })}</span>
+                    {/if}
+                  </div>
+                {/if}
+              {/each}
+
+              {#if agentRunning && agentTimeline.length === 0}
+                <div class="flex items-center gap-2 text-xs text-slate-500 py-3">
+                  <span class="animate-spin">⏳</span>
+                  <span>{t("agent_thinking")}</span>
+                </div>
+              {/if}
+            </div>
+
+            {#if agentRetryNotice}
+              <div class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                🔁 {t("agent_retry_notice", { attempt: agentRetryNotice.attempt, max: agentRetryNotice.max })}
+              </div>
+            {/if}
+
+            {#if agentError}
+              <div class="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl p-3 space-y-1">
+                <div class="font-bold">⚠️ {t("agent_error_title")}</div>
+                <div class="text-[11px]">
+                  {agentError.code === "session_expired" ? t("agent_session_expired") : agentError.message}
+                </div>
+              </div>
+            {/if}
+
+            {#if agentFinish}
+              <div class="border-t pt-3 space-y-1">
+                <div class="text-xs font-bold {agentFinish.ok ? 'text-emerald-700' : 'text-slate-700'}">
+                  {agentFinish.ok ? "✅" : "⚠️"} {agentStopLabel(agentFinish.stop)}
+                </div>
+                {#if agentFinishLine}
+                  <div class="text-[11px] text-slate-500 font-medium">
+                    <bdi>{agentFinishLine}</bdi>
+                  </div>
+                {/if}
+              </div>
+            {/if}
+          </div>
+        {/if}
+
+        <!-- Agent Approval List (ProposedAction rows with diff) -->
+        {#if proposedActions.length > 0}
+          <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
+            <div class="flex items-center justify-between border-b pb-3 gap-3">
+              <div>
+                <h3 class="text-sm font-bold text-slate-800">{t("agent_actions_title")}</h3>
+                <p class="text-xs text-slate-500">{t("agent_actions_hint")}</p>
+              </div>
+              <button
+                type="button"
+                onclick={approveSelectedActions}
+                disabled={isLoading}
+                class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow transition disabled:opacity-50 shrink-0"
+              >
+                {t("approve_selected")}
+              </button>
+            </div>
+
+            <div class="divide-y divide-slate-100 max-h-[30rem] overflow-y-auto">
+              {#each proposedActions as action (action.id)}
+                <div class="py-3 space-y-2">
+                  <div class="flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      bind:checked={action.selected}
+                      class="mt-1 rounded text-blue-600 focus:ring-blue-500"
+                    />
+                    <div class="flex-1 min-w-0 text-xs space-y-1.5">
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <span class="bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded font-mono font-bold">
+                          <bdi dir="ltr">{action.path}</bdi>
+                        </span>
+                        <span class="text-[10px] text-slate-500">
+                          {action.kind === "upload_text_file" ? t("kind_upload_file") : t("kind_set_params")}
+                        </span>
+                        {#if !action.exists}
+                          <span class="text-[10px] bg-sky-50 text-sky-700 border border-sky-200 px-1.5 py-0.5 rounded-full font-semibold">
+                            ✨ {t("will_be_created")}
+                          </span>
+                        {/if}
+                        <span
+                          class="text-[10px] px-1.5 py-0.5 rounded-full font-semibold border
+                            {action.risk === 'destructive'
+                              ? 'bg-rose-50 text-rose-700 border-rose-200'
+                              : action.risk === 'overwrite'
+                                ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                : 'bg-emerald-50 text-emerald-700 border-emerald-200'}"
+                        >
+                          {action.risk === "destructive"
+                            ? t("risk_destructive")
+                            : action.risk === "overwrite"
+                              ? t("risk_overwrite")
+                              : t("risk_low")}
+                        </span>
+                      </div>
+
+                      {#if action.reason}
+                        <p class="text-slate-600 leading-relaxed">{action.reason}</p>
+                      {/if}
+
+                      {#if action.warnings.length > 0}
+                        <div class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                          <span class="font-bold">{t("warnings_title")}:</span>
+                          <ul class="list-disc {rtl ? 'mr-4' : 'ml-4'} mt-0.5 space-y-0.5">
+                            {#each action.warnings as w}
+                              <li>{@html ltrify(w)}</li>
+                            {/each}
+                          </ul>
+                        </div>
+                      {/if}
+
+                      <button
+                        type="button"
+                        onclick={() => (action.expanded = !action.expanded)}
+                        class="text-[11px] text-blue-600 hover:underline"
+                      >
+                        {action.expanded ? `▲ ${t("hide_diff")}` : `▼ ${t("show_diff")}`}
+                      </button>
+
+                      {#if action.expanded}
+                        {#if action.diff.length === 0}
+                          <p class="text-[11px] text-slate-400">{t("no_diff")}</p>
+                        {:else}
+                          <div class="overflow-x-auto border border-slate-200 rounded-lg">
+                            <table class="w-full text-[11px]">
+                              <thead class="bg-slate-50 text-slate-500">
+                                <tr>
+                                  <th class="p-1.5 {rtl ? 'text-right' : 'text-left'} font-semibold">{t("diff_key")}</th>
+                                  <th class="p-1.5 {rtl ? 'text-right' : 'text-left'} font-semibold">{t("diff_before")}</th>
+                                  <th class="p-1.5 {rtl ? 'text-right' : 'text-left'} font-semibold">{t("diff_after")}</th>
+                                </tr>
+                              </thead>
+                              <tbody class="divide-y divide-slate-100">
+                                {#each action.diff as d}
+                                  <tr
+                                    class={d.kind === "new"
+                                      ? "bg-sky-50/60"
+                                      : d.kind === "changed"
+                                        ? "bg-amber-50/60"
+                                        : ""}
+                                  >
+                                    <td class="p-1.5 font-mono font-bold text-slate-700">
+                                      <bdi dir="ltr">{d.key}</bdi>
+                                    </td>
+                                    <td class="p-1.5 font-mono text-slate-500">
+                                      {#if d.before}
+                                        <bdi dir="ltr">{d.before}</bdi>
+                                      {:else}
+                                        <span class="text-slate-300">{t("diff_empty")}</span>
+                                      {/if}
+                                    </td>
+                                    <td
+                                      class="p-1.5 font-mono font-semibold
+                                        {d.kind === 'new'
+                                          ? 'text-sky-700'
+                                          : d.kind === 'changed'
+                                            ? 'text-amber-800'
+                                            : 'text-slate-400'}"
+                                    >
+                                      {#if d.after}
+                                        <bdi dir="ltr">{d.after}</bdi>
+                                      {:else}
+                                        <span class="text-slate-300">{t("diff_empty")}</span>
+                                      {/if}
+                                    </td>
+                                  </tr>
+                                {/each}
+                              </tbody>
+                            </table>
+                          </div>
+                        {/if}
+                      {/if}
+
+                      {#if actionResults[action.id]}
+                        {@const res = actionResults[action.id]}
+                        <div
+                          class="text-[11px] rounded-lg px-2.5 py-1.5 border
+                            {res.ok
+                              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                              : 'bg-rose-50 border-rose-200 text-rose-800'}"
+                        >
+                          <div class="font-bold">
+                            {res.ok ? `✓ ${t("action_ok")}` : `✗ ${t("action_failed")}`}
+                            {#if res.message}<span class="font-normal"> — {res.message}</span>{/if}
+                          </div>
+                          {#if res.params && res.params.length > 0}
+                            <ul class="mt-1 space-y-0.5">
+                              {#each res.params as p}
+                                <li class="flex items-center gap-1.5 flex-wrap">
+                                  <span>{p.applied ? "✓" : "✗"}</span>
+                                  <span class="font-mono"><bdi dir="ltr">{p.key}={p.value}</bdi></span>
+                                  <span class="text-slate-500">
+                                    {p.applied ? t("param_applied") : t("param_not_applied")}
+                                  </span>
+                                  {#if p.note}<span class="text-slate-500">— {p.note}</span>{/if}
+                                </li>
+                              {/each}
+                            </ul>
+                          {/if}
+                        </div>
+                      {/if}
+                    </div>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
 
         <!-- Action Preview List Card (If parsed actions exist) -->
         {#if parsedActions.length > 0}
@@ -1170,6 +2014,42 @@
                       <p class="text-slate-500 mt-1">{action.description}</p>
                     {/if}
                   </div>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
+
+        <!-- Script-mode execution results (per extension, per parameter) -->
+        {#if scriptActionResults.length > 0}
+          <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-3">
+            <h3 class="text-xs font-bold text-slate-700 border-b pb-2">{t("results_title")}</h3>
+            <div class="space-y-2">
+              {#each scriptActionResults as res}
+                <div
+                  class="text-[11px] rounded-lg px-2.5 py-2 border
+                    {res.ok
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      : 'bg-rose-50 border-rose-200 text-rose-800'}"
+                >
+                  <div class="font-bold flex items-center gap-1.5 flex-wrap">
+                    <span>{res.ok ? "✓" : "✗"}</span>
+                    <span class="font-mono"><bdi dir="ltr">{res.path}</bdi></span>
+                    <span>{res.ok ? t("action_ok") : t("action_failed")}</span>
+                    {#if res.message}<span class="font-normal">— {res.message}</span>{/if}
+                  </div>
+                  {#if res.params && res.params.length > 0}
+                    <ul class="mt-1 space-y-0.5">
+                      {#each res.params as p}
+                        <li class="flex items-center gap-1.5 flex-wrap">
+                          <span>{p.applied ? "✓" : "✗"}</span>
+                          <span class="font-mono"><bdi dir="ltr">{p.key}={p.value}</bdi></span>
+                          <span class="text-slate-500">{p.applied ? t("param_applied") : t("param_not_applied")}</span>
+                          {#if p.note}<span class="text-slate-500">— {p.note}</span>{/if}
+                        </li>
+                      {/each}
+                    </ul>
+                  {/if}
                 </div>
               {/each}
             </div>
@@ -1461,7 +2341,7 @@
               id="login-mfa-method"
               bind:value={loginMethodId}
               onchange={(e) => {
-                const m = loginMethods.find((mm) => mm.id === e.target.value);
+                const m = loginMethods.find((mm) => mm.id === /** @type {HTMLSelectElement} */ (e.currentTarget).value);
                 loginSendType = m && m.send_types && m.send_types[0] ? m.send_types[0] : "";
                 loginCodeSent = false;
               }}
@@ -1516,3 +2396,77 @@
     </div>
   {/if}
 </div>
+
+<style>
+  /* Assistant markdown inside the agent progress panel (rendered via {@html}). */
+  :global(.agent-md > *:first-child) {
+    margin-top: 0;
+  }
+  :global(.agent-md > *:last-child) {
+    margin-bottom: 0;
+  }
+  :global(.agent-md p) {
+    margin: 0 0 0.45rem;
+  }
+  :global(.agent-md ul),
+  :global(.agent-md ol) {
+    margin: 0 0 0.45rem;
+    padding-inline-start: 1.15rem;
+    list-style: revert;
+  }
+  :global(.agent-md li) {
+    margin-bottom: 0.15rem;
+  }
+  :global(.agent-md strong) {
+    font-weight: 700;
+    color: #0f172a;
+  }
+  :global(.agent-md h1),
+  :global(.agent-md h2),
+  :global(.agent-md h3),
+  :global(.agent-md h4) {
+    font-weight: 700;
+    color: #0f172a;
+    margin: 0.5rem 0 0.3rem;
+    font-size: 0.8rem;
+  }
+  :global(.agent-md code) {
+    direction: ltr;
+    unicode-bidi: isolate;
+    background: #e2e8f0;
+    border-radius: 0.25rem;
+    padding: 0.05rem 0.25rem;
+    font-size: 0.72rem;
+  }
+  :global(.agent-md pre) {
+    direction: ltr;
+    unicode-bidi: isolate;
+    text-align: left;
+    background: #0f172a;
+    color: #e2e8f0;
+    border-radius: 0.5rem;
+    padding: 0.6rem;
+    overflow-x: auto;
+    margin: 0 0 0.45rem;
+  }
+  :global(.agent-md pre code) {
+    background: transparent;
+    padding: 0;
+    color: inherit;
+  }
+  :global(.agent-md a) {
+    color: #2563eb;
+    text-decoration: underline;
+  }
+  :global(.agent-md table) {
+    display: block;
+    overflow-x: auto;
+    border-collapse: collapse;
+    margin: 0 0 0.45rem;
+  }
+  :global(.agent-md th),
+  :global(.agent-md td) {
+    border: 1px solid #e2e8f0;
+    padding: 0.2rem 0.4rem;
+  }
+</style>
