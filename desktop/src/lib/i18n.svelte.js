@@ -86,6 +86,10 @@ export const LOCALES = {
       knowledge_modal_title: "בסיס ידע מוטמע ({count} קבצים בזיכרון)",
       search_knowledge: "חיפוש קובץ ידע...",
       select_file_hint: "בחר קובץ מהרשימה לצפייה בתיעוד",
+      view_formatted: "תצוגה מעוצבת",
+      view_raw: "קוד גולמי",
+      copy_file: "העתק תוכן",
+      file_copied: "התוכן הועתק ללוח!",
 
       mfa_modal_title: "אימות דו-שלבי (MFA) נדרש",
       mfa_modal_desc:
@@ -198,6 +202,10 @@ export const LOCALES = {
       knowledge_modal_title: "Embedded knowledge base ({count} files in memory)",
       search_knowledge: "Search knowledge file...",
       select_file_hint: "Select a file from the list to view documentation",
+      view_formatted: "Formatted View",
+      view_raw: "Raw Text",
+      copy_file: "Copy Content",
+      file_copied: "Content copied to clipboard!",
 
       mfa_modal_title: "Two-factor authentication (MFA) required",
       mfa_modal_desc:

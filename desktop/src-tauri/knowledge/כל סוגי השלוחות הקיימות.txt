@@ -1,403 +1,606 @@
+# כל סוגי השלוחות הקיימות
+<a id="כל-סוגי-השלוחות-הקיימות"></a><a id="topic-78"></a><a id="post-99"></a>
+
 רשימת כל סוגי השלוחות (100) הקיימים היום
 
-* menu = תפריט
+- [menu = תפריט](תפריט.txt#menu-שלוחת-תפריט)
 
+```ini
 type=menu
+```
 
-* playfile = השמעת קבצים
+- [playfile = השמעת קבצים](השמעת קבצים.txt#מודול-השמעת-קבצים-playfile-שרשור-חדש)
 
+```ini
 type=playfile
+```
 
-* confbridge = חדר ועידה או שידור חי
+- [confbridge = חדר ועידה או שידור חי](https://f2.freeivr.co.il/topic/27/confbridge-%D7%97%D7%93%D7%A8-%D7%95%D7%95%D7%A2%D7%99%D7%93%D7%94-%D7%A9%D7%99%D7%93%D7%95%D7%A8-%D7%97%D7%99)
 
+```ini
 type=confbridge
+```
 
-* admin_login = כניסה לניהול
+- [admin_login = כניסה לניהול](שלוחת ניהול המערכת.txt#שלוחת-ניהול-המערכת-admin_login)
 
+```ini
 type=admin_login
+```
 
-* record = הקלטות
+- [record = הקלטות](https://f2.freeivr.co.il/topic/25/%D7%94%D7%A7%D7%9C%D7%98%D7%95%D7%AA-%D7%9E%D7%AA%D7%95%D7%9A-%D7%94%D7%9E%D7%A2%D7%A8%D7%9B%D7%AA-record)
 
+```ini
 type=record
+```
 
-* routing = ניתוב השיחה למספרי טלפון ישראליים
+- [routing = ניתוב השיחה למספרי טלפון ישראליים](ניתוביה.txt#מודול-ראוטינג)
 
+```ini
 type=routing
+```
 
-* routing_time = ניתוב שיחה לפי שעות
+- [routing_time = ניתוב שיחה לפי שעות](ניתוביה.txt#ראוטינג-טיים-ניתוב-שיחה-לפי-זמנים)
 
+```ini
 type=routing_time
+```
 
-* routing_yemot = הפניה למערכת תכנים אחרת בימות המשיח
+- [routing_yemot = הפניה למערכת תכנים אחרת בימות המשיח](ניתוביה.txt#ראוטינג-טלגרם-העברת-שיחה-למשתמש-טלגרם)
 
+```ini
 type=routing_yemot
+```
 
-* points_say_total = השמעת הניקוד שנצבר
+- [points_say_total = השמעת הניקוד שנצבר](הניקוד במערכת - הסבר והגדרות.txt#שלוחת-השמעת-הנקודות-שנצברו-points_say_total)
 
+```ini
 type=points_say_total
+```
 
-* last_play = חזרה להשמעה אחרונה
+- [last_play = חזרה להשמעה אחרונה](האזנה אחרונה.txt#האזנה-אחרונה-last_play)
 
+```ini
 type=last_play
+```
 
-* voicemail_email= תא קולי המוגבל למאה הודעות (לא פעיל כרגע)
+- [voicemail_email= תא קולי המוגבל למאה הודעות](תפריט.txt#שלוחת-כוכבית) (לא פעיל כרגע)
 
+```ini
 type=voicemail_email
+```
 
-* template_add_number = הוספת מספר לרשימת תפוצה
+- [template_add_number = הוספת מספר לרשימת תפוצה](הוספה והסרת המספר המחייג מרשימת התפוצה.txt#הוספה-והסרת-המספר-המחייג-מרשימת-התפוצה-template_add_number-template_remove_number)
 
+```ini
 type=template_add_number
+```
 
-* template_remove_number = הסרת מספר מרשימת תפוצה
+- [template_remove_number = הסרת מספר מרשימת תפוצה](הוספה והסרת המספר המחייג מרשימת התפוצה.txt#הוספה-והסרת-המספר-המחייג-מרשימת-התפוצה-template_add_number-template_remove_number)
 
+```ini
 type=template_remove_number
+```
 
-* menu_star = תפריט מקש כוכבית
+- [menu_star = תפריט מקש כוכבית](תפריט.txt#השלוחות-שבשלוחת-כוכבית-ברירת-מחדל)
 
+```ini
 type=menu_star
+```
 
-* message_options_menu = הוראות הפעלה
+- message_options_menu = הוראות הפעלה
 
+```ini
 type=message_options_menu
+```
 
-* oref_alerts = התראות צבע אדום
+- oref_alerts = התראות צבע אדום
 
+```ini
 type=oref_alerts
+```
 
-* oref_alerts_quiet_wave = הגל השקט לאזעקות
+- oref_alerts_quiet_wave = הגל השקט לאזעקות
 
+```ini
 type=oref_alerts_quiet_wave
+```
 
-* zmanim = מערכת זמני היום
+- [zmanim = מערכת זמני היום](זמני היום והמרת תאריך עברי לועזי והפוך - זמני שבת.txt#zmanim-זמני-היום-והמרת-תאריך-עברי-לועזי-והפוך)
 
+```ini
 type=zmanim
+```
 
-* exchange_rates = שערי מטח
+- exchange_rates = שערי מטח
 
+```ini
 type=exchange_rates
+```
 
-* play_and_return = השמעת הודעה אחת בלבד
+- [play_and_return = השמעת הודעה אחת בלבד](https://f2.freeivr.co.il/topic/5/%D7%94%D7%92%D7%93%D7%A8%D7%95%D7%AA-%D7%9B%D7%9C%D7%9C%D7%99%D7%95%D7%AA-%D7%9C%D7%A0%D7%99%D7%94%D7%95%D7%9C-%D7%9E%D7%A2%D7%A8%D7%9B%D7%AA-%D7%98%D7%9C%D7%A4%D7%95%D7%A0%D7%99%D7%AA/34)
 
+```ini
 type=play_and_return
+```
 
-* voicemail_email = תא קולי השולח העתק לדואר האלקטרוני
+- [voicemail_email = תא קולי השולח העתק לדואר האלקטרוני](תא קולי השולח העתק לאימייל.txt#תא-קולי-השולח-העתק-לדוא-ל-voicemail_email)
 
+```ini
 type=voicemail_email
+```
 
-* conference_amount = חדר וועידה המוגבל לכמות משתמשים
+- conference_amount = חדר וועידה המוגבל לכמות משתמשים
 
+```ini
 type=conference_amount
+```
 
-* toplay_time = השמעת הודעת לפי תאריך עברי, לועזי, ספירת העומר, חנוכה, כולל הגבלת הפעמים להשמעת הודעה למאזין
+- [toplay_time = השמעת הודעת לפי תאריך עברי, לועזי, ספירת העומר, חנוכה, כולל הגבלת הפעמים להשמעת הודעה למאזין](השמעת הודעת לפי תאריך עברי - לועזי - ספירת העומר - חנוכה.txt#השמעת-הודעת-לפי-תאריך-עברי-לועזי-ספירת-העומר-חנוכה-כולל-הגבלת-הפעמים-להשמעת-הודעה-למאזין-toplay_time)
 
+```ini
 type=toplay_time
+```
 
-* chapter_receive = חלוקת פרקי תהילים, גמרא, פרשות, דפים ועמודים
+- [chapter_receive = חלוקת פרקי תהילים, גמרא, פרשות, דפים ועמודים](חלוקת פרקי תהילים - גמרא -פרשות-דפים-עמודים.txt#חלוקת-פרקי-תהילים-גמרא-פרשות-דפים-עמודים-chapter_receive)
 
+```ini
 type=chapter_receive
+```
 
-* trivia_questions = שאלות טרוויה ונכון או לא נכון
+- [trivia_questions = שאלות טרוויה ונכון או לא נכון](שאלות טריוויה ונכון או לא נכון.txt#שאלות-טריוויה-ונכון-או-לא-נכון-trivia_questions)
 
+```ini
 type=trivia_questions
+```
 
-* open_wap_reseller_customer = פתיחת וצאפפון ובלוג פון
+- [open_wap_reseller_customer = פתיחת וצאפפון ובלוג פון](https://f2.freeivr.co.il/topic/5/#:~:text=%D7%95%D7%95%D7%A6%D7%90%D7%A4%D7%95%D7%9F%20%D7%9E%D7%94%D7%9E%D7%A2%D7%A8%D7%9B%D7%AA%20%D7%A9%D7%9C%D7%9B%D7%9D)
 
+```ini
 type=open_wap_reseller_customer
+```
 
-* say_hour_and_minute=השמעת השעה כעת
+- say_hour_and_minute=השמעת השעה כעת
 
+```ini
 type=say_hour_and_minute
+```
 
-* approval_number=חלוקת מספרי אישורים
+- approval_number=חלוקת מספרי אישורים
 
+```ini
 type=approval_number
+```
 
-* recording_and_entering_data=קבלת נתונים
+- recording_and_entering_data=קבלת נתונים
 
+```ini
 type=recording_and_entering_data
+```
 
-* phone_play_list=רשימות השמעה אישיות
+- phone_play_list=רשימות השמעה אישיות
 
+```ini
 type=phone_play_list
+```
 
-* create_ivr2=פתיחת מערכת תכנים חדשה
+- create_ivr2=פתיחת מערכת תכנים חדשה
 
+```ini
 type=create_ivr2
+```
 
-* routing_1800=הפניית השיחה למספרי 1800 ו 1801
+- routing_1800=הפניית השיחה למספרי 1800 ו 1801
 
+```ini
 type=routing_1800
+```
 
-* menu_voice=תפריט עם זיהוי דיבור קולי
+- menu_voice=תפריט עם זיהוי דיבור קולי
 
+```ini
 type=menu_voice
+```
 
-* sending_sms=שליחת sms
+- sending_sms=שליחת sms
 
+```ini
 type=sending_sms
+```
 
-* go_to_folder_time=שלוחת העברה לתיקיות אחרות לפי שעות או ימים
+- go_to_folder_time=שלוחת העברה לתיקיות אחרות לפי שעות או ימים
 
+```ini
 type=go_to_folder_time
+```
 
-* stt_dir_all_file=שלוחת המרת קבצי קול לטקסט
+- stt_dir_all_file=שלוחת המרת קבצי קול לטקסט
 
+```ini
 type=stt_dir_all_file
+```
 
-* points_save=שלוחת הוספת ניקוד
+- points_save=שלוחת הוספת ניקוד
 
+```ini
 type=points_save
+```
 
-* hangup=שלוחת ניתוק השיחה
+- hangup=שלוחת ניתוק השיחה
 
+```ini
 type=hangup
+```
 
-* start_select_file=שלוחה המאפשרת למאזין לבחור האם בשלוחת השמעת קבצים יהיה לו תפריט בחירת קובץ או לא
+- start_select_file=שלוחה המאפשרת למאזין לבחור האם בשלוחת השמעת קבצים יהיה לו תפריט בחירת קובץ או לא
 
+```ini
 type=start_select_file
+```
 
-* playdir_time=שידור חי מדומה, מרובה קבצים, השמעת כל הקבצים בשלוחה בהתאם לזמן המוגדר
+- playdir_time=שידור חי מדומה, מרובה קבצים, השמעת כל הקבצים בשלוחה בהתאם לזמן המוגדר
 
+```ini
 type=playdir_time
+```
 
-* private_did_customer=קבלת או שליחת מספר אישי
+- private_did_customer=קבלת או שליחת מספר אישי
 
+```ini
 type=private_did_customer
+```
 
-* tzintuk=הפעלת צינתוק, ושלוחה להרשמה או הוספה מרשימת הצינתוקים
+- tzintuk=הפעלת צינתוק, ושלוחה להרשמה או הוספה מרשימת הצינתוקים
 
+```ini
 type=tzintuk
+```
 
-* go_to_folder_from_list_all_information=פילטר לפי רשימות, העברה לשלוחה אחרת לפי הגדרות ספציפיות ללקוח לפי קובץ
+- go_to_folder_from_list_all_information=פילטר לפי רשימות, העברה לשלוחה אחרת לפי הגדרות ספציפיות ללקוח לפי קובץ
 
+```ini
 type=go_to_folder_from_list_all_information
+```
 
-* nedarim_plus=סליקת אשראי דרך נדרים פלוס
+- nedarim_plus=סליקת אשראי דרך נדרים פלוס
 
+```ini
 type=nedarim_plus
+```
 
-* pelecard=סליקת אשראי דרך פלאקארד
+- pelecard=סליקת אשראי דרך פלאקארד
 
+```ini
 type=pelecard
+```
 
-* cardcom=סליקת אשראי דרך קרדקום
+- cardcom=סליקת אשראי דרך קרדקום
 
+```ini
 type=cardcom
+```
 
-* sale_seats=מערכת מכירת מושבים
+- sale_seats=מערכת מכירת מושבים
 
+```ini
 type=sale_seats
+```
 
-* chapter_receive_mishnayot_select=מערכת חלוקת משניות, כולל שמיעת המשניות משלוש רבנים, ודוחות לימוד
+- chapter_receive_mishnayot_select=מערכת חלוקת משניות, כולל שמיעת המשניות משלוש רבנים, ודוחות לימוד
 
+```ini
 type=chapter_receive_mishnayot_select
+```
 
-* study_tracking=מעקב לימודים
+- study_tracking=מעקב לימודים
 
+```ini
 type=study_tracking
+```
 
-* go_to_folder_count=מעבר לשלוחות שונות, כשיש פחות או יותר מכמות, כל שהיא, של מאזינים שעברו במודול הזה
+- go_to_folder_count=מעבר לשלוחות שונות, כשיש פחות או יותר מכמות, כל שהיא, של מאזינים שעברו במודול הזה
 
+```ini
 type=go_to_folder_count
+```
 
-* go_to_folder=מעבר לשלוחה אחרת
+- go_to_folder=מעבר לשלוחה אחרת
 
+```ini
 type=go_to_folder
+```
 
-* music_on_hold=מוזיקה בהמתנה ושידורים חיים מערוצים שונים
+- music_on_hold=מוזיקה בהמתנה ושידורים חיים מערוצים שונים
 
+```ini
 type=music_on_hold
+```
 
-* queue=מודל תור
+- queue=מודל תור
 
+```ini
 type=queue
+```
 
-* send_fax=שליחת פקס
+- send_fax=שליחת פקס
 
+```ini
 type=send_fax
+```
 
-* recv_fax=קבלת פקס
+- recv_fax=קבלת פקס
 
+```ini
 type=recv_fax
+```
 
-* examination=מודל מבחן
+- examination=מודל מבחן
 
+```ini
 type=examination
+```
 
-* seker=שלוחת סקר
+- seker=שלוחת סקר
 
+```ini
 type=seker
+```
 
-* fundraising=מודול מעקב גיוס תרומות
+- fundraising=מודול מעקב גיוס תרומות
 
+```ini
 type=fundraising
+```
 
-* members_active=מודול כמות חברים פעילים
+- members_active=מודול כמות חברים פעילים
 
+```ini
 type=members_active
+```
 
-* counter_calculator=מודל חישוב מונה
+- counter_calculator=מודל חישוב מונה
 
+```ini
 type=counter_calculator
+```
 
-* donation_campaign=מודל התרמות, מצינג
+- donation_campaign=מודל התרמות, מצינג
 
+```ini
 type=donation_campaign
+```
 
-* points_edit=מודול הוספת או הורדת נקודות ללקוח על ידי מנהלים
+- points_edit=מודול הוספת או הורדת נקודות ללקוח על ידי מנהלים
 
+```ini
 type=points_edit
+```
 
-* yemot_dialer_campaign_list=מודול הוספה, הסרה או חסימה מתבניות רשימות התפוצה
+- yemot_dialer_campaign_list=מודול הוספה, הסרה או חסימה מתבניות רשימות התפוצה
 
+```ini
 type=yemot_dialer_campaign_list
+```
 
-* tehillim_select_save_and_listen=מודול בחירת ושמירת פרק תהילים קבוע ללקוח
+- tehillim_select_save_and_listen=מודול בחירת ושמירת פרק תהילים קבוע ללקוח
 
+```ini
 type=tehillim_select_save_and_listen
+```
 
-* points_to_other_id=הוספת ניקוד למשתמש אחר
+- points_to_other_id=הוספת ניקוד למשתמש אחר
 
+```ini
 type=points_to_other_id
+```
 
-* api=תקשור עם מחשבים וממשקי נתונים חיצוניים
+- api=תקשור עם מחשבים וממשקי נתונים חיצוניים
 
+```ini
 type=api
+```
 
-* examination_american=מבחן אמריקאי
+- examination_american=מבחן אמריקאי
 
+```ini
 type=examination_american
+```
 
-* key_play_set_record_go_to_foldar=כניסה לפי מפתח, הגבלת כניסות, השמעת הודעה, תפריט, הקלטה, ומעבר לתיקיה אחרת
+- key_play_set_record_go_to_foldar=כניסה לפי מפתח, הגבלת כניסות, השמעת הודעה, תפריט, הקלטה, ומעבר לתיקיה אחרת
 
+```ini
 type=key_play_set_record_go_to_foldar
+```
 
-* block_id_type=חסימת משתמש
+- block_id_type=חסימת משתמש
 
+```ini
 type=block_id_type
+```
 
-* coupon=חלוקת קופונים
+- coupon=חלוקת קופונים
 
+```ini
 type=coupon
+```
 
-* credit_card=התחברות למנוע סליקה כללי
+- credit_card=התחברות למנוע סליקה כללי
 
+```ini
 type=credit_card
+```
 
-* id_message=השמעת נתונים והודעות אישיות
+- id_message=השמעת נתונים והודעות אישיות
 
+```ini
 type=id_message
+```
 
-* id_list_message=השמעת הודעות ללקוח ברצף
+- id_list_message=השמעת הודעות ללקוח ברצף
 
+```ini
 type=id_list_message
+```
 
-* record_system_messages=הקלטת הודעות מערכת בשלוחה
+- record_system_messages=הקלטת הודעות מערכת בשלוחה
 
+```ini
 type=record_system_messages
+```
 
-* folder_play_random=הפעלת שלוחה רנדומלית
+- folder_play_random=הפעלת שלוחה רנדומלית
 
+```ini
 type=folder_play_random
+```
 
-* playfile_time=הפעלת קובץ בשעה מתוזמנת, שידור חי מדומה
+- playfile_time=הפעלת קובץ בשעה מתוזמנת, שידור חי מדומה
 
+```ini
 type=playfile_time
+```
 
-* yemot_dialer_campaign_start=הפעלה מהירה לקמפיין
+- yemot_dialer_campaign_start=הפעלה מהירה לקמפיין
 
+```ini
 type=yemot_dialer_campaign_start
+```
 
-* template_filter=הפניית משתמשים לשלוחות שונות לפי רשימת התפוצה
+- template_filter=הפניית משתמשים לשלוחות שונות לפי רשימת התפוצה
 
+```ini
 type=template_filter
+```
 
-* sale_products=הזמנת מוצרים לפי מספר קטלוגי
+- sale_products=הזמנת מוצרים לפי מספר קטלוגי
 
+```ini
 type=sale_products
+```
 
-* daily_message=הודעה יומית מתחלפת ומעבר לשלוחה אחרת
+- daily_message=הודעה יומית מתחלפת ומעבר לשלוחה אחרת
 
+```ini
 type=daily_message
+```
 
-* go_to_folder_date=ההעברה לשלוחה אחרת, לפי תאריך עברי או לועזי או ו לפי שעה או דקה
+- go_to_folder_date=ההעברה לשלוחה אחרת, לפי תאריך עברי או לועזי או ו לפי שעה או דקה
 
+```ini
 type=go_to_folder_date
+```
 
-* tasks_report=דיווח משימות יומי
+- tasks_report=דיווח משימות יומי
 
+```ini
 type=tasks_report
+```
 
-* checking_units=בדיקת יתרת יחידות נמוכה או פג תוקף מתקרב
+- checking_units=בדיקת יתרת יחידות נמוכה או פג תוקף מתקרב
 
+```ini
 type=checking_units
+```
 
-* time_keeper=שעון נוכחות
+- time_keeper=שעון נוכחות
 
+```ini
 type=time_keeper
+```
 
-* routing_ip=ניתוב שיחה למחשב חיצוני
+- routing_ip=ניתוב שיחה למחשב חיצוני
 
+```ini
 type=routing_ip
+```
 
-* points_and_rating=מודול נקודות ללקוח על קניה, ודירוג בעל העסק
+- points_and_rating=מודול נקודות ללקוח על קניה, ודירוג בעל העסק
 
+```ini
 type=points_and_rating
+```
 
-* limit_call_seconds=הגבלת אורך השיחה, טיימר
+- limit_call_seconds=הגבלת אורך השיחה, טיימר
 
+```ini
 type=limit_call_seconds
+```
 
-* calculator_add_percentage=מחשבון אחוזי תוספת
+- calculator_add_percentage=מחשבון אחוזי תוספת
 
+```ini
 type=calculator_add_percentage
+```
 
-* access_filter=פילטר כניסה לפי תאריך עם אפשרויות שונות ואפשרות הגבלת כמות הכניסות
+- access_filter=פילטר כניסה לפי תאריך עם אפשרויות שונות ואפשרות הגבלת כמות הכניסות
 
+```ini
 type=access_filter
+```
 
-* number_now_is=המספר כעת הוא
+- number_now_is=המספר כעת הוא
 
+```ini
 type=number_now_is
+```
 
-* say_amount_subscribers=השמעת כמות נרשמים מתוך שלוחת קבלת נתונים
+- say_amount_subscribers=השמעת כמות נרשמים מתוך שלוחת קבלת נתונים
 
+```ini
 type=say_amount_subscribers
+```
 
-* amount_incoming_phone_numbers=ספירת כמות מספרי טלפון שונים שנכנסו לשלוחה
+- amount_incoming_phone_numbers=ספירת כמות מספרי טלפון שונים שנכנסו לשלוחה
 
+```ini
 type=amount_incoming_phone_numbers
+```
 
-* nitoviya=קבלת או שליחת ניתוביה
+- nitoviya=קבלת או שליחת ניתוביה
 
+```ini
 type=nitoviya
+```
 
-* nitoviya_b_say_number=שמיעת מספר ניתוביה
+- nitoviya_b_say_number=שמיעת מספר ניתוביה
 
+```ini
 type=nitoviya_b_say_number
+```
 
-* donation_campaign_some_actions=שלוחת מצינג עם הגדרות נוספות
+- donation_campaign_some_actions=שלוחת מצינג עם הגדרות נוספות
 
+```ini
 type=donation_campaign_some_actions
+```
 
-* private_did=הוצאת וקבלת שיחות
+- private_did=הוצאת וקבלת שיחות
 
+```ini
 type=private_did
+```
 
-* add_id_to_list = הוספת ערך ID של המתקשר או ערך מוגדר מראש לקובץ במערכת לבחירתכם
+- [add_id_to_list = הוספת ערך ID של המתקשר או ערך מוגדר מראש לקובץ במערכת לבחירתכם](שלוחת הוספת הסרת ושינוי ערכים וערך ID מקבצי הגדרות במערכת.txt#מודול-הוספת-ערך-ID-של-המתקשר-או-ערך-מוגדר-מראש-לקובץ-במערכת-לבחירתכם)
 
+```ini
 type=add_id_to_list
+```
 
-* remove_id_from_list = הסרת ערך ID של המתקשר או ערך מוגדר מראש מקובץ במערכת לבחירתכם
+- [remove_id_from_list = הסרת ערך ID של המתקשר או ערך מוגדר מראש מקובץ במערכת לבחירתכם](שלוחת הוספת הסרת ושינוי ערכים וערך ID מקבצי הגדרות במערכת.txt#מודול-הסרת-ערך-ID-של-המתקשר-או-ערך-מוגדר-מראש-מקובץ-במערכת-לבחירתכם)
 
+```ini
 type=remove_id_from_list
+```
 
-* yemot_dialer = שלוחה לניהול קמפיין
+- [yemot_dialer = שלוחה לניהול קמפיין](שלוחה לניהול קמפיין.txt#שלוחה-לניהול-קמפיין)
 
+```ini
 type=yemot_dialer
+```
 
-* sending_sms_and_return = שליחת sms ללקוח בכניסה לשלוחה ומעבר לשלוחה אחרת
+- [sending_sms_and_return = שליחת sms ללקוח בכניסה לשלוחה ומעבר לשלוחה אחרת](שליחת SMS למתקשר או לאחרים.txt#מודול-שליחת-sms-ללקוח-בכניסה-לשלוחה-ומעבר-לשלוחה-אחרת)
 
+```ini
 type=sending_sms_and_return
+```
 
-חזור למעלה
+[חזור למעלה](#כל-סוגי-השלוחות-הקיימות)

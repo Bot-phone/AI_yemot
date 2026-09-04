@@ -457,6 +457,14 @@ def main():
 
     resolver.save_cache()
 
+    desktop_knowledge_dir = repo_root / "desktop" / "src-tauri" / "knowledge"
+    if desktop_knowledge_dir.exists() and not args.dry_run:
+        import shutil
+        print("[*] מסנכרן קבצים מעודכנים לתיקיית הדסקטופ (desktop/src-tauri/knowledge)...")
+        for f in output_dir.glob("*.txt"):
+            shutil.copy2(f, desktop_knowledge_dir / f.name)
+
+
     print("\n" + "=" * 50)
     print("סיכום סנכרון תיעוד:")
     print(f"  נושאים שנסרקו: {len(topics_to_process)}")

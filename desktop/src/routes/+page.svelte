@@ -1,7 +1,14 @@
 <script>
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { marked } from "marked";
   import { t, i18n, isRTL, setLocale, availableLocales } from "$lib/i18n.svelte.js";
+
+  marked.setOptions({
+    gfm: true,
+    breaks: true,
+  });
 
   // Interface direction (reactive to language changes)
   let rtl = $derived(isRTL());
@@ -51,6 +58,19 @@
   let selectedFileContent = $state(null);
   let selectedFileName = $state("");
   let showKnowledgeModal = $state(false);
+  let isRawView = $state(false);
+  let copyFeedback = $state(false);
+  let contentContainerRef = $state(null);
+
+  let renderedMarkdownHtml = $derived.by(() => {
+    if (!selectedFileContent) return "";
+    try {
+      return marked.parse(selectedFileContent);
+    } catch (e) {
+      console.error("Markdown parse error:", e);
+      return selectedFileContent;
+    }
+  });
 
   // GitHub Update info
   let updateInfo = $state(null);
@@ -318,12 +338,134 @@
     }
   }
 
-  async function openKnowledgeFile(fileName) {
-    selectedFileName = fileName;
+  async function openKnowledgeFile(fileName, targetAnchor = null) {
+    let cleanName = (fileName || "").trim();
+    if (!cleanName) return;
+
+    if (!cleanName.endsWith(".txt")) {
+      cleanName += ".txt";
+    }
+
+    const match = knowledgeFiles.find(
+      (f) =>
+        f.name === cleanName ||
+        f.name.replace(".txt", "") === cleanName.replace(".txt", "")
+    );
+    selectedFileName = match ? match.name : cleanName;
+
     try {
-      selectedFileContent = await invoke("get_knowledge_file_content", { fileName });
+      selectedFileContent = await invoke("get_knowledge_file_content", {
+        fileName: selectedFileName,
+      });
+      await tick();
+      if (targetAnchor) {
+        setTimeout(() => scrollToAnchor(targetAnchor), 80);
+      } else if (contentContainerRef) {
+        contentContainerRef.scrollTop = 0;
+      }
     } catch (e) {
       selectedFileContent = t("file_load_error", { error: e });
+    }
+  }
+
+  function scrollToAnchor(targetId) {
+    if (!contentContainerRef || !targetId) return;
+    const cleanId = decodeURIComponent(targetId).replace(/^#/, "").trim();
+    if (!cleanId) return;
+
+    let el = null;
+    try {
+      el =
+        contentContainerRef.querySelector(`[id="${CSS.escape(cleanId)}"]`) ||
+        contentContainerRef.querySelector(`a[name="${CSS.escape(cleanId)}"]`);
+    } catch (_) {}
+
+    if (!el && cleanId.startsWith("post-")) {
+      const pid = cleanId.replace("post-", "");
+      try {
+        el = contentContainerRef.querySelector(`[id*="${CSS.escape(pid)}"]`);
+      } catch (_) {}
+    }
+
+    if (!el) {
+      const headings = contentContainerRef.querySelectorAll("h1, h2, h3, h4");
+      for (const h of headings) {
+        if (h.textContent && h.textContent.includes(cleanId)) {
+          el = h;
+          break;
+        }
+      }
+    }
+
+    if (el) {
+      const targetEl =
+        el.tagName === "A" && el.textContent.trim() === "" && el.nextElementSibling
+          ? el.nextElementSibling
+          : el;
+
+      targetEl.scrollIntoView({ behavior: "smooth", block: "start" });
+      targetEl.classList.remove("target-highlight");
+      void targetEl.offsetWidth;
+      targetEl.classList.add("target-highlight");
+    }
+  }
+
+  async function handleContentClick(e) {
+    const anchor = e.target.closest("a");
+    if (!anchor) return;
+
+    const href = anchor.getAttribute("href");
+    if (!href) return;
+
+    e.preventDefault();
+
+    if (
+      href.startsWith("http://") ||
+      href.startsWith("https://") ||
+      href.startsWith("mailto:")
+    ) {
+      try {
+        await openUrl(href);
+      } catch (err) {
+        console.error("Failed to open URL with plugin-opener:", err);
+        window.open(href, "_blank");
+      }
+      return;
+    }
+
+    if (href.startsWith("#")) {
+      scrollToAnchor(href);
+      return;
+    }
+
+    const decodedHref = decodeURIComponent(href);
+    const hashIndex = decodedHref.indexOf("#");
+    let targetFile =
+      hashIndex >= 0 ? decodedHref.slice(0, hashIndex) : decodedHref;
+    const targetAnchor =
+      hashIndex >= 0 ? decodedHref.slice(hashIndex + 1) : null;
+
+    if (targetFile) {
+      if (!targetFile.endsWith(".txt")) {
+        targetFile += ".txt";
+      }
+      if (searchQuery && !targetFile.includes(searchQuery)) {
+        searchQuery = "";
+      }
+      await openKnowledgeFile(targetFile, targetAnchor);
+    }
+  }
+
+  async function copySelectedContent() {
+    if (!selectedFileContent) return;
+    try {
+      await navigator.clipboard.writeText(selectedFileContent);
+      copyFeedback = true;
+      setTimeout(() => {
+        copyFeedback = false;
+      }, 2000);
+    } catch (e) {
+      console.error("Failed to copy:", e);
     }
   }
 
@@ -895,13 +1037,74 @@
           </div>
 
           <!-- Content Viewer -->
-          <div class="md:col-span-2 p-4 overflow-y-auto max-h-[70vh] bg-slate-50">
+          <div class="md:col-span-2 flex flex-col overflow-hidden bg-slate-50">
             {#if selectedFileContent}
-              <h4 class="text-xs font-bold text-slate-800 mb-2 border-b pb-1">{selectedFileName}</h4>
-              <pre class="text-xs text-slate-700 font-sans whitespace-pre-wrap leading-relaxed">{selectedFileContent}</pre>
+              <!-- Header Bar of Viewer -->
+              <div class="p-3 border-b bg-white flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2 overflow-hidden">
+                  <span class="text-base">📄</span>
+                  <h4 class="text-xs font-bold text-slate-800 truncate" title={selectedFileName}>
+                    {selectedFileName.replace('.txt', '')}
+                  </h4>
+                </div>
+
+                <div class="flex items-center gap-2">
+                  <!-- View Mode Toggle -->
+                  <div class="flex bg-slate-100 p-0.5 rounded-lg text-[11px]">
+                    <button
+                      type="button"
+                      onclick={() => isRawView = false}
+                      class="px-2.5 py-1 rounded-md transition font-medium {!isRawView ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-600 hover:text-slate-800'}"
+                    >
+                      {t("view_formatted")}
+                    </button>
+                    <button
+                      type="button"
+                      onclick={() => isRawView = true}
+                      class="px-2.5 py-1 rounded-md transition font-medium {isRawView ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-600 hover:text-slate-800'}"
+                    >
+                      {t("view_raw")}
+                    </button>
+                  </div>
+
+                  <!-- Copy Button -->
+                  <button
+                    type="button"
+                    onclick={copySelectedContent}
+                    class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] rounded-lg transition flex items-center gap-1 font-medium"
+                    title={t("copy_file")}
+                  >
+                    {#if copyFeedback}
+                      <span class="text-emerald-600 font-bold">✓ {t("file_copied")}</span>
+                    {:else}
+                      <span>📋 {t("copy_file")}</span>
+                    {/if}
+                  </button>
+                </div>
+              </div>
+
+              <!-- Content Scrollable Body -->
+              <div
+                bind:this={contentContainerRef}
+                class="flex-1 p-5 overflow-y-auto max-h-[64vh] bg-white scroll-smooth"
+              >
+                {#if isRawView}
+                  <pre class="text-xs text-slate-700 font-sans whitespace-pre-wrap leading-relaxed">{selectedFileContent}</pre>
+                {:else}
+                  <!-- svelte-ignore a11y_click_events_have_key_events -->
+                  <!-- svelte-ignore a11y_no_static_element_interactions -->
+                  <div
+                    class="knowledge-prose text-xs leading-relaxed"
+                    onclick={handleContentClick}
+                  >
+                    {@html renderedMarkdownHtml}
+                  </div>
+                {/if}
+              </div>
             {:else}
-              <div class="h-full flex items-center justify-center text-slate-400 text-xs">
-                {t("select_file_hint")}
+              <div class="h-full flex flex-col items-center justify-center text-slate-400 text-xs p-6 gap-2">
+                <span class="text-3xl">📖</span>
+                <span>{t("select_file_hint")}</span>
               </div>
             {/if}
           </div>
