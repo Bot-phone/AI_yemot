@@ -468,13 +468,13 @@ function callGemini(userText, modelName, knowledgeFileList, geminiApiKey, driveF
       functionDeclarations: [
         {
           name: "get_knowledge_file_content",
-          description: "(למשל 'השמעת קבצים.txt') יש להשתמש בכלי זה כלי לקבלת את ההגדרות המדויקות עבור סוגי שלוחות שיש להם קובץ ידע תואם.",
+          description: "מחזיר את הטקסט המלא של מסמך ידע אחד ממאגר הידע (המסמך עלול להיות ארוך מאוד). השתמש בכלי רק לאחר שבחרת מסמך מתוך רשימת המסמכים שניתנה לך, ובקש קובץ אחד בלבד בכל קריאה.",
           parameters: {
             type: "OBJECT",
             properties: {
               fileName: {
                 type: "STRING",
-                description: "שם הקובץ המדויק, כולל סיומת (למשל: 'record_settings.ini'), או מספר שמות מופרדים בפסיקים."
+                description: "שם הקובץ המדויק מתוך הרשימה, כולל הסיומת .txt (לדוגמה: 'תפריט.txt'). קובץ אחד בכל קריאה."
               }
             },
             required: ["fileName"]
@@ -482,7 +482,7 @@ function callGemini(userText, modelName, knowledgeFileList, geminiApiKey, driveF
         },
         {
           name: "get_yemot_ini_file_content",
-          description: "יש להשתמש בכלי זה כדי לקרוא תוכן של קובץ INI קיים ממערכת הטלפון (ימות המשיח) לפני עדכון שלו. זה הכרחי כדי לשמר הגדרות קיימות שלא משתנות.",
+          description: "קריאת תוכן קובץ INI קיים ממערכת הטלפון (ימות המשיח), כדי לשמר הגדרות קיימות לפני עדכון. זמין רק כאשר הבקשה כוללת טוקן; ללא טוקן הכלי מחזיר הודעה שהוא אינו זמין.",
           parameters: {
             type: "OBJECT",
             properties: {
@@ -499,17 +499,26 @@ function callGemini(userText, modelName, knowledgeFileList, geminiApiKey, driveF
   ];
 
   const fileListString = (knowledgeFileList.length > 0)
-    ? "רשימת קבצי ידע זמינים לעיונך:\n" + knowledgeFileList.join('\n')
+    ? "רשימת מסמכי הידע הזמינים (העבר לכלי את השם עם הסיומת \".txt\"):\n" +
+      knowledgeFileList.map(function (n) { return String(n).replace(/\.txt$/i, ''); }).join('\n')
     : "אין קבצי ידע דינמיים זמינים.";
 
   // הנחיות מערכת למודל: פלט פעולות כשורות URL (ללא token) עם שורות הסבר
   const systemInstructions =
-    "אתה עוזר AI מקצועי להגדרת שלוחות במערכות ימות המשיח (IVR). ענה בעברית ברורה ומדויקת. " +
-    "השתמש בכלים הזמינים (קבצי ידע וקבצי INI) כדי לתת הגדרות מדויקות. " +
-    "אם המשתמש ביקש עדכון הגדרות שלוחה, פלט עבור כל פעולה שורת הסבר ואחריה שורת URL לביצוע, בפורמט:\n" +
+    "אתה מומחה להגדרת שלוחות במערכת ימות המשיח (IVR). ענה בעברית תמציתית ומדויקת.\n" +
+    "עובדות יסוד: שלוחה היא תיקייה בנתיב כגון /1/2, וההגדרות שלה נמצאות בקובץ ext.ini שבתוכה. "
+    + "לשלוחה חדשה חובה להגדיר type=. בחר תמיד את המודול הספציפי ביותר למשימה — למשל לניתוב שיחות קיימים "
+    + "routing, routing_time, routing_yemot, nitoviya ו-queue, וכל אחד למטרה אחרת.\n" +
+    "איסור המצאה: אין להמציא שמות פרמטרים או ערכים. כל מפתח שאתה כותב חייב להופיע במסמך ידע שקראת בשיחה הזו "
+    + "באמצעות הכלי. אם אינך יודע — קרא את המסמך המתאים או שאל.\n" +
+    "פורמט הפלט לעדכון הגדרות: לכל שלוחה שורת הסבר אחת ואחריה כתובת URL אחת שמרכזת את כל הפרמטרים של אותה שלוחה:\n" +
     "הסבר: <תיאור קצר של הפעולה>\n" +
     "https://www.call2all.co.il/ym/api/UpdateExtension?path=ivr2:/<שלוחה>&<param>=<value>&<param2>=<value2>\n" +
-    "אין לכלול token ב-URL. הוסף שורת 'הבהרה:' להערות חשובות למשתמש. אם חסר מידע חיוני, שאל שאלת הבהרה.";
+    "אין לכלול token בכתובת. אל תפצל פרמטרים של אותה שלוחה לכמה כתובות, ואל תכתוב יותר משורת 'הסבר:' אחת לכל כתובת.\n" +
+    "הוסף שורת 'הבהרה:' להערות חשובות למשתמש. אל תצטט ואל תשכתב את תוכן מסמכי הידע. "
+    + "אם חסר מידע חיוני — שאל שאלת הבהרה ממוקדת אחת בלבד.";
+
+  const fullSystemInstructions = systemInstructions + "\n\n" + fileListString;
 
   const history = [
     {
@@ -527,13 +536,11 @@ function callGemini(userText, modelName, knowledgeFileList, geminiApiKey, driveF
       contents: history,
       tools: tools,
       systemInstruction: {
-        parts: [{ text: systemInstructions }]
+        parts: [{ text: fullSystemInstructions }]
       },
       generationConfig: {
         temperature: 0.0,
-        topK: 1,
-        topP: 1,
-        maxOutputTokens: 9999
+        maxOutputTokens: 8192
       },
       safetySettings: [
         { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
@@ -602,45 +609,61 @@ function callGemini(userText, modelName, knowledgeFileList, geminiApiKey, driveF
       Logger.log("Warning: Candidate content was empty.");
     }
 
-    const functionCall = candidate.content?.parts?.[0]?.functionCall;
+    const parts = (candidate.content && candidate.content.parts) ? candidate.content.parts : [];
+    const functionCalls = parts
+      .map(function (part) { return part && part.functionCall; })
+      .filter(function (fc) { return !!fc; });
 
-    if (functionCall) {
-      const toolName = functionCall.name;
-      let toolResultContent = "";
-      Logger.log(`Gemini requested Tool: ${toolName} (FinishReason: ${candidate.finishReason})`);
+    if (functionCalls.length > 0) {
+      const responseParts = [];
 
-      if (toolName === "get_knowledge_file_content") {
-        const fileName = functionCall.args ? functionCall.args.fileName : "";
-        Logger.log("Tool: get_knowledge_file_content with file: " + fileName);
-        toolResultContent = getKnowledgeFileContent(fileName, driveFolderId);
-      } else if (toolName === "get_yemot_ini_file_content") {
-        const filePath = functionCall.args ? functionCall.args.filePath : "";
-        Logger.log("Tool: get_yemot_ini_file_content with path: " + filePath);
-        toolResultContent = downloadYemotFileContent(filePath, token);
-      } else {
-        Logger.log("Gemini requested an unknown tool: " + toolName);
-        toolResultContent = `שגיאה: הכלי '${toolName}' אינו מוכר.`;
+      for (let i = 0; i < functionCalls.length; i++) {
+        const functionCall = functionCalls[i];
+        const toolName = functionCall.name;
+        let toolResultContent = "";
+        Logger.log(`Gemini requested Tool: ${toolName} (FinishReason: ${candidate.finishReason})`);
+
+        if (toolName === "get_knowledge_file_content") {
+          const fileName = functionCall.args ? functionCall.args.fileName : "";
+          Logger.log("Tool: get_knowledge_file_content with file: " + fileName);
+          toolResultContent = getKnowledgeFileContent(fileName, driveFolderId);
+        } else if (toolName === "get_yemot_ini_file_content") {
+          const filePath = functionCall.args ? functionCall.args.filePath : "";
+          Logger.log("Tool: get_yemot_ini_file_content with path: " + filePath);
+          if (!token) {
+            Logger.log("No token in request - returning local-mode notice for ini tool.");
+            toolResultContent = "לא זמין במצב זה: האפליקציה קוראת את קובצי ה-ini באופן מקומי. הנח שהשלוחה חדשה, או בקש מהמשתמש את ההגדרות הקיימות.";
+          } else {
+            toolResultContent = downloadYemotFileContent(filePath, token);
+          }
+        } else {
+          Logger.log("Gemini requested an unknown tool: " + toolName);
+          toolResultContent = `שגיאה: הכלי '${toolName}' אינו מוכר.`;
+        }
+
+        responseParts.push({
+          functionResponse: {
+            name: toolName,
+            response: {
+              content: toolResultContent
+            }
+          }
+        });
       }
 
       history.push({
         role: "function",
-        parts: [
-          {
-            functionResponse: {
-              name: toolName,
-              response: {
-                content: toolResultContent
-              }
-            }
-          }
-        ]
+        parts: responseParts
       });
 
-      Logger.log("Added tool result to history. Continuing loop.");
+      Logger.log(`Added ${responseParts.length} tool result(s) to history. Continuing loop.`);
 
     } else if (candidate.finishReason === "STOP") {
       Logger.log("Gemini finished with STOP (and no tool call).");
-      const responseText = candidate.content?.parts?.[0]?.text;
+      const responseText = parts
+        .map(function (part) { return (part && typeof part.text === 'string') ? part.text : ''; })
+        .join('')
+        .trim();
 
       if (responseText) {
         return responseText;
