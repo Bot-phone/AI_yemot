@@ -5,19 +5,34 @@ pub mod gemini;
 pub mod openai;
 
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use futures_util::{Stream, StreamExt};
 use tokio_util::sync::CancellationToken;
 
 use super::types::{ProviderError, ProviderRequest, ProviderResponse};
 
+/// Where a provider pushes assistant text as it arrives. `Sync` (rather than
+/// `Send`) is what makes `&DeltaSink` itself `Send`, keeping the call future
+/// `Send` as `async_trait` requires.
+pub type DeltaSink<'a> = &'a (dyn Fn(&str) + Sync);
+
+/// A sink that drops everything — used by tests and by call sites that do not
+/// have a UI to stream into.
+pub fn noop_sink() -> DeltaSink<'static> {
+    &|_: &str| {}
+}
+
 #[async_trait]
 pub trait Provider: Send + Sync {
+    /// `on_delta` receives assistant *text* as it streams in. It is called from
+    /// the provider read loop, so it must not block.
     async fn complete(
         &self,
         req: &ProviderRequest,
         cancel: &CancellationToken,
+        on_delta: DeltaSink<'_>,
     ) -> Result<ProviderResponse, ProviderError>;
 
     /// The wire family (`claude` / `gemini` / `openai`). Diagnostics only —
@@ -78,6 +93,145 @@ where
             Ok(inner) => inner,
             Err(_) => Err(ProviderError::Transient("פסק זמן בהמתנה לתשובת המודל".to_string())),
         },
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Streaming plumbing
+// ---------------------------------------------------------------------------
+
+/// A stream that produced nothing for this long is treated as dead. It is not
+/// the turn ceiling: `call_with_deadline` still bounds the whole read.
+pub const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Coalescing window for text deltas — one Tauri event per ~60ms is smooth to
+/// read and cheap; one per token is neither.
+const DELTA_INTERVAL: Duration = Duration::from_millis(60);
+const DELTA_CHARS: usize = 40;
+
+/// Buffers text deltas and hands them to the sink at most every
+/// `DELTA_INTERVAL` or every `DELTA_CHARS` characters, whichever comes first.
+pub struct DeltaBatch<'a> {
+    sink: DeltaSink<'a>,
+    buf: String,
+    chars: usize,
+    last: Instant,
+}
+
+impl<'a> DeltaBatch<'a> {
+    pub fn new(sink: DeltaSink<'a>) -> Self {
+        DeltaBatch {
+            sink,
+            buf: String::new(),
+            chars: 0,
+            last: Instant::now(),
+        }
+    }
+
+    pub fn push(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        self.buf.push_str(text);
+        self.chars += text.chars().count();
+        if self.chars >= DELTA_CHARS || self.last.elapsed() >= DELTA_INTERVAL {
+            self.flush();
+        }
+    }
+
+    /// Emit whatever is buffered. Always called once the stream ends, so no
+    /// tail is ever lost.
+    pub fn flush(&mut self) {
+        if self.buf.is_empty() {
+            return;
+        }
+        (self.sink)(&self.buf);
+        self.buf.clear();
+        self.chars = 0;
+        self.last = Instant::now();
+    }
+}
+
+impl Drop for DeltaBatch<'_> {
+    fn drop(&mut self) {
+        self.flush();
+    }
+}
+
+/// Reads a byte stream line by line. SSE framing is `\n`-delimited, and a
+/// chunk boundary can fall anywhere, so the tail is carried across chunks.
+pub struct LineReader<S> {
+    stream: S,
+    buf: Vec<u8>,
+    eof: bool,
+}
+
+impl<S, B> LineReader<S>
+where
+    S: Stream<Item = Result<B, reqwest::Error>> + Unpin,
+    B: AsRef<[u8]>,
+{
+    pub fn new(stream: S) -> Self {
+        LineReader {
+            stream,
+            buf: Vec::new(),
+            eof: false,
+        }
+    }
+
+    /// The next line without its terminator, or `None` at end of stream. A
+    /// final line with no trailing newline is still returned (a truncated
+    /// stream must not silently swallow its last event).
+    pub async fn next_line(
+        &mut self,
+        cancel: &CancellationToken,
+    ) -> Result<Option<String>, ProviderError> {
+        loop {
+            if let Some(pos) = self.buf.iter().position(|b| *b == b'\n') {
+                let mut line: Vec<u8> = self.buf.drain(..=pos).collect();
+                line.pop();
+                if line.last() == Some(&b'\r') {
+                    line.pop();
+                }
+                return Ok(Some(String::from_utf8_lossy(&line).into_owned()));
+            }
+            if self.eof {
+                if self.buf.is_empty() {
+                    return Ok(None);
+                }
+                let line = String::from_utf8_lossy(&self.buf).into_owned();
+                self.buf.clear();
+                return Ok(Some(line));
+            }
+            let next = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return Err(ProviderError::Cancelled),
+                r = tokio::time::timeout(STREAM_IDLE_TIMEOUT, self.stream.next()) => r,
+            };
+            match next {
+                Err(_) => {
+                    return Err(ProviderError::Transient(
+                        "השידור מספק ה-AI נתקע ללא תשובה".to_string(),
+                    ))
+                }
+                Ok(None) => self.eof = true,
+                Ok(Some(Err(e))) => return Err(classify_reqwest(&e)),
+                Ok(Some(Ok(chunk))) => self.buf.extend_from_slice(chunk.as_ref()),
+            }
+        }
+    }
+}
+
+/// The payload of one SSE `data:` line, or `None` for anything else (comments,
+/// `event:` lines, blank separators). Providers switch on the JSON's own type
+/// field, so the `event:` name is redundant.
+pub fn sse_data(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix("data:")?;
+    let rest = rest.strip_prefix(' ').unwrap_or(rest);
+    if rest.is_empty() {
+        None
+    } else {
+        Some(rest)
     }
 }
 
@@ -251,6 +405,75 @@ mod tests {
         assert_eq!(build("claude", "regular", "k", "").unwrap().id(), "claude");
         assert_eq!(build("gemini", "regular", "k", "").unwrap().id(), "gemini");
         assert_eq!(build("groq", "regular", "k", "").unwrap().id(), "openai");
+    }
+
+    #[test]
+    fn sse_data_only_matches_data_lines() {
+        assert_eq!(sse_data("data: {\"a\":1}"), Some("{\"a\":1}"));
+        // exactly one optional space is stripped, the rest is payload
+        assert_eq!(sse_data("data:{\"a\":1}"), Some("{\"a\":1}"));
+        assert_eq!(sse_data("data:  x"), Some(" x"));
+        assert_eq!(sse_data("data: [DONE]"), Some("[DONE]"));
+        assert_eq!(sse_data("event: message_start"), None);
+        assert_eq!(sse_data(": keep-alive"), None);
+        assert_eq!(sse_data(""), None);
+        assert_eq!(sse_data("data:"), None);
+    }
+
+    #[test]
+    fn deltas_are_batched_by_size_and_flushed_at_the_end() {
+        let seen = std::sync::Mutex::new(Vec::<String>::new());
+        let sink = |d: &str| seen.lock().unwrap().push(d.to_string());
+        {
+            let mut b = DeltaBatch::new(&sink);
+            // under the char threshold: nothing goes out yet
+            b.push("abc");
+            assert!(seen.lock().unwrap().is_empty());
+            b.push(&"x".repeat(40));
+            assert_eq!(seen.lock().unwrap().len(), 1);
+            b.push("tail");
+        }
+        // the drop flushed the tail — no text is ever lost
+        let out = seen.lock().unwrap().clone();
+        assert_eq!(out.len(), 2);
+        assert_eq!(out.concat(), format!("abc{}tail", "x".repeat(40)));
+    }
+
+    #[tokio::test]
+    async fn line_reader_splits_across_chunk_boundaries() {
+        let chunks: Vec<Result<Vec<u8>, reqwest::Error>> = vec![
+            Ok(b"data: on".to_vec()),
+            Ok("e\r\ndata: t".as_bytes().to_vec()),
+            // a Hebrew character split across two chunks must survive
+            Ok(vec![0xd7]),
+            Ok(vec![0x90, b'\n']),
+            Ok(b"data: no-newline-at-eof".to_vec()),
+        ];
+        let mut r = LineReader::new(futures_util::stream::iter(chunks));
+        let cancel = CancellationToken::new();
+        let mut lines = Vec::new();
+        while let Some(l) = r.next_line(&cancel).await.unwrap() {
+            lines.push(l);
+        }
+        assert_eq!(lines, vec!["data: one", "data: tא", "data: no-newline-at-eof"]);
+    }
+
+    #[tokio::test]
+    async fn line_reader_honours_cancellation() {
+        let (_tx, rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, reqwest::Error>>(1);
+        let mut r = LineReader::new(tokio_stream_of(rx));
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        assert_eq!(r.next_line(&cancel).await, Err(ProviderError::Cancelled));
+    }
+
+    /// A `Stream` over an mpsc receiver, without pulling in `tokio-stream`.
+    fn tokio_stream_of(
+        rx: tokio::sync::mpsc::Receiver<Result<Vec<u8>, reqwest::Error>>,
+    ) -> impl Stream<Item = Result<Vec<u8>, reqwest::Error>> + Unpin {
+        Box::pin(futures_util::stream::unfold(rx, |mut rx| async move {
+            rx.recv().await.map(|item| (item, rx))
+        }))
     }
 
     #[test]

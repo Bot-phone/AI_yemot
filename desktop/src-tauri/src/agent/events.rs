@@ -126,6 +126,27 @@ pub fn turn_start(app: &AppHandle, run_id: &str, turn: u32, max_turns: u32) {
     );
 }
 
+/// One batch of streamed assistant text. The UI appends it to the block it is
+/// currently building; `assistant_text` then replaces that block with the
+/// authoritative full text, so a dropped delta cannot corrupt the transcript.
+pub fn text_delta(app: &AppHandle, run_id: &str, delta: &str) {
+    emit(
+        app,
+        "agent:text_delta",
+        serde_json::json!({ "run_id": run_id, "delta": delta }),
+    );
+}
+
+/// Drop whatever partial block the UI is building. Sent before a retry, so the
+/// re-streamed turn does not append onto the abandoned attempt.
+pub fn text_delta_reset(app: &AppHandle, run_id: &str) {
+    emit(
+        app,
+        "agent:text_delta",
+        serde_json::json!({ "run_id": run_id, "delta": "", "reset": true }),
+    );
+}
+
 pub fn assistant_text(app: &AppHandle, run_id: &str, turn: u32, text: &str) {
     emit(
         app,

@@ -123,7 +123,8 @@ async fn send_to_direct_ai(payload: AIRequestPayload) -> Result<AIResponsePayloa
     };
 
     let response = provider
-        .complete(&req, &CancellationToken::new())
+        // One-shot call with no UI to stream into.
+        .complete(&req, &CancellationToken::new(), providers::noop_sink())
         .await
         .map_err(|e| e.message())?;
 

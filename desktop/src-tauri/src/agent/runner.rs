@@ -1037,8 +1037,14 @@ async fn call_with_retry(
     started_at: Instant,
 ) -> Result<ProviderResponse, ProviderError> {
     let mut last: ProviderError = ProviderError::Transient("—".to_string());
+    // The provider streams into this; every batch becomes one `agent:text_delta`.
+    let on_delta = |d: &str| events::text_delta(&ctx.app, &ctx.run_id, d);
     for attempt in 1..=MAX_ATTEMPTS {
-        match provider.complete(req, &ctx.cancel).await {
+        if attempt > 1 {
+            // Whatever the failed attempt streamed is not part of this turn.
+            events::text_delta_reset(&ctx.app, &ctx.run_id);
+        }
+        match provider.complete(req, &ctx.cancel, &on_delta).await {
             Ok(r) => return Ok(r),
             // Auth / BadRequest / Refusal / Cancelled: retrying cannot help.
             Err(e) if !e.retryable() => return Err(e),
