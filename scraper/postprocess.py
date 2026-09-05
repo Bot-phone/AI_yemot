@@ -10,7 +10,6 @@ postprocess.py - הרצת ניקוי-העל (postprocess_knowledge_text) על כ
 """
 
 import argparse
-import shutil
 import sys
 from pathlib import Path
 
@@ -20,7 +19,6 @@ from cleaner import postprocess_knowledge_text  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 KNOWLEDGE_DIR = REPO_ROOT / "knowledge"
-DESKTOP_KNOWLEDGE_DIR = REPO_ROOT / "desktop" / "src-tauri" / "knowledge"
 
 CHARS_PER_TOKEN = 2.44
 
@@ -39,7 +37,6 @@ def main():
     ap = argparse.ArgumentParser(description="ניקוי-על לקובצי knowledge (ללא רשת)")
     ap.add_argument("--dry-run", action="store_true", help="ללא כתיבה לדיסק")
     ap.add_argument("--check", action="store_true", help="יציאה בקוד 1 אם קובץ אינו נקי")
-    ap.add_argument("--no-copy", action="store_true", help="לא להעתיק לתיקיית הדסקטופ")
     args = ap.parse_args()
 
     count_tokens, token_mode = _token_counter()
@@ -91,11 +88,7 @@ def main():
         print("[dry-run] לא נכתב דבר.")
         return 0
 
-    if not args.no_copy and DESKTOP_KNOWLEDGE_DIR.exists():
-        for path in KNOWLEDGE_DIR.glob("*.txt"):
-            shutil.copy2(path, DESKTOP_KNOWLEDGE_DIR / path.name)
-        print(f"[*] הועתקו {len(files)} קבצים ל-{DESKTOP_KNOWLEDGE_DIR}")
-
+    # אין עותק כפול: אפליקציית הדסקטופ מטמיעה ישירות את knowledge/ שבשורש.
     return 0
 
 

@@ -15,6 +15,7 @@ import html
 import argparse
 import urllib.request
 import urllib.parse
+import urllib.error
 from pathlib import Path
 
 # ייבוא מודולי ניקוי וסיווג פוסטים
@@ -168,10 +169,17 @@ class LinkResolver:
                     res = {"tid": target_tid, "index": post_idx}
                     self.redirect_cache[pid_str] = res
                     return res
+            # תשובה תקינה שאינה הפניה — תוצאה שלילית יציבה, שווה לשמור במטמון
+            self.redirect_cache[pid_str] = None
+            return None
+        except urllib.error.HTTPError as e:
+            # רק פוסט שנמחק/לא קיים הוא תוצאה שלילית קבועה
+            if e.code in (404, 410):
+                self.redirect_cache[pid_str] = None
+            return None
         except Exception:
-            pass
-        self.redirect_cache[pid_str] = None
-        return None
+            # שגיאת רשת / timeout — לא ממטמנים, כדי לא לקבע כישלון זמני
+            return None
 
     def resolve(self, href: str, text: str, current_file: str) -> str:
         """פענוח קישור והמרתו לקישור יחסי בקובץ היעד או השארתו כקישור רשת"""
@@ -464,13 +472,8 @@ def main():
 
     resolver.save_cache()
 
-    desktop_knowledge_dir = repo_root / "desktop" / "src-tauri" / "knowledge"
-    if desktop_knowledge_dir.exists() and not args.dry_run:
-        import shutil
-        print("[*] מסנכרן קבצים מעודכנים לתיקיית הדסקטופ (desktop/src-tauri/knowledge)...")
-        for f in output_dir.glob("*.txt"):
-            shutil.copy2(f, desktop_knowledge_dir / f.name)
-
+    # אין עותק כפול של המאגר: אפליקציית הדסקטופ מטמיעה ישירות את knowledge/
+    # שבשורש המאגר (ראו desktop/src-tauri/build.rs).
 
     print("\n" + "=" * 50)
     print("סיכום סנכרון תיעוד:")
