@@ -147,6 +147,11 @@ pub fn classify_response(json: &Value) -> Result<(), YemotError> {
 
     match status {
         "OK" => Ok(()),
+        // A dead session comes back as FORBIDDEN too ("session is expired",
+        // seen live) — that is a re-login, not a permission problem.
+        "FORBIDDEN" if looks_like_dead_session(&message) => {
+            Err(YemotError::SessionExpired(message))
+        }
         "FORBIDDEN" => Err(YemotError::Forbidden(if message.is_empty() {
             "הבקשה נדחתה על ידי השרת".to_string()
         } else {
@@ -1721,6 +1726,23 @@ mod tests {
             code: None,
             message: "some other problem".to_string()
         }));
+    }
+
+    #[test]
+    fn a_forbidden_expired_session_is_a_session_error() {
+        // Seen live: the tree request after a Yemot session timed out.
+        let live = json!({"responseStatus": "FORBIDDEN", "message": "session is expired"});
+        assert!(matches!(
+            classify_response(&live),
+            Err(YemotError::SessionExpired(m)) if m == "session is expired"
+        ));
+        assert!(render_error(&classify_response(&live).unwrap_err())
+            .starts_with("SESSION_EXPIRED: "));
+        // A genuine permission refusal stays FORBIDDEN.
+        assert!(matches!(
+            classify_response(&json!({"responseStatus": "FORBIDDEN", "message": "ip blocked"})),
+            Err(YemotError::Forbidden(_))
+        ));
     }
 
     #[test]
