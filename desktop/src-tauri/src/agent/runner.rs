@@ -1541,6 +1541,8 @@ mod tests {
             exists: true,
             diff: Vec::new(),
             warnings: Vec::new(),
+            previous: None,
+            snapshot_hash: None,
         }
     }
 
