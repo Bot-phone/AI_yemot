@@ -57,6 +57,41 @@ Reverses one already-applied action by writing back the values `approve_actions`
 
 Provided by `yemot.rs` (see that module). Used only by legacy script mode to apply the parsed action list.
 
+### `get_extension_tree(token, root, depth) -> Result<ExtTreeNode[], String>`
+
+Read-only. Lists the extensions under `root` (`""` / `"/"` = the whole line) with `YemotClient::list_extensions` and nests the flat result by path. `depth` is clamped to 1..=4. A node whose direct parent is missing from the listing is attached to its nearest present ancestor, or to the top level when it has none.
+
+```jsonc
+// ExtTreeNode
+{
+  "path": "ivr2:/1/2",   // canonical
+  "display": "/1/2",     // what the UI shows
+  "ext_type": "menu",    // "" when the server reported none
+  "title": "תפריט ראשי", // "" when the server reported none
+  "children": []
+}
+```
+
+### `read_extension(token, path) -> Result<ExtensionDetail, String>`
+
+Read-only. `get_ext_ini_fresh` + `list_files` for one extension; never touches the write state.
+
+```jsonc
+// ExtensionDetail
+{
+  "path": "ivr2:/1/2", "display": "/1/2",
+  "exists": true,                  // false = no ext.ini (the extension is not configured)
+  "ext_type": "menu",              // null when there is no `type` key
+  "params": [ { "key": "type", "value": "menu" } ],   // file order, comments dropped
+  "raw": "type=menu\n",            // ext.ini text, capped at 64 KiB + a trailing "…[קוצץ]"
+  "size": 214, "mtime": "01/01/2026 10:00",
+  "files": [ { "name": "000.wav", "size": 12, "mtime": null, "kind": "audio" } ]
+  // kind: "ini" (ext.ini) | "audio" (wav/mp3/m4a/ogg/wma/aac) | "text" (txt/ini/tts/csv/json/api) | "other"
+}
+```
+
+Both commands fail closed on an empty token and render every failure with `yemot::render_error`, so an expired or unverified session arrives as an `Err` string prefixed `SESSION_EXPIRED: ` — the same code prefix the run loop maps to `agent:error { code: "session_expired" }`.
+
 ### Secrets: `secret_set(name, value)`, `secret_get(name) -> Option<String>`, `secret_delete(name)`
 
 Provided by `secrets.rs`. Store the Yemot token and provider API keys in the OS credential store (Windows Credential Manager / macOS Keychain / Secret Service) under service name `ai-yemot`, never in `localStorage`. `name` must be one of a fixed allowlist (`yemot_token`, `api_key_claude`, `api_key_gemini`, `api_key_openai`, `api_key_groq`, `api_key_custom`, `custom_base_url`) — anything else is rejected before it reaches the keychain. `secret_set` with an empty value deletes the entry. A locked/unavailable credential store makes `secret_get` return `None` (the app still starts); the same condition on write or delete is a hard error.
@@ -121,7 +156,9 @@ Rules the UI relies on:
   "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0,
   "turns": 0, "tool_calls": 0, "elapsed_ms": 0,
   "cache_hit_pct": 0.0,               // cache_read / (input + cache_read + cache_write)
-  "cost_usd": null                    // null when the model is unknown to the price table
+  "cost_usd": null,                   // null when the model is unknown to the price table
+  "price_list_date": null             // "2026-09" — the public price list behind cost_usd;
+                                      // non-null exactly when cost_usd is non-null
 }
 ```
 

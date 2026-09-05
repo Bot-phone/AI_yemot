@@ -13,6 +13,16 @@ pub struct Price {
     pub output: f64,
 }
 
+/// The month this table was last checked against the providers' published
+/// price lists.
+///
+/// The numbers are **public list prices only**. Free tiers, promotional
+/// credits, negotiated rates and any provider price change made after this
+/// date are invisible to the app, so a reported cost is an estimate of what a
+/// BYOK key would be billed, not an invoice. A model that is not in the table
+/// yields `None` and no cost (and no date) is reported at all.
+pub const PRICE_LIST_DATE: &str = "2026-09";
+
 const TABLE: &[(&str, Price)] = &[
     (
         "claude-fable-5-1",
@@ -99,6 +109,12 @@ pub fn cost_usd(model: &str, u: &Usage) -> Option<f64> {
     )
 }
 
+/// The price-list month to report next to a cost — `Some` exactly when there
+/// is a cost to qualify.
+pub fn price_list_date(cost: Option<f64>) -> Option<String> {
+    cost.map(|_| PRICE_LIST_DATE.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,6 +168,19 @@ mod tests {
         // and the longest prefix still wins inside the claude family
         assert_eq!(price_for("claude-sonnet-4-6-20260101"), price_for("claude-sonnet-4-6"));
         assert_ne!(price_for("claude-sonnet-4-6"), price_for("claude-sonnet-5"));
+    }
+
+    #[test]
+    fn price_list_date_is_present_exactly_when_a_cost_is() {
+        let u = Usage::default();
+        assert_eq!(
+            price_list_date(cost_usd("claude-opus-5", &u)),
+            Some(PRICE_LIST_DATE.to_string())
+        );
+        // a zero cost is still a cost — the date qualifies it
+        assert_eq!(cost_usd("claude-opus-5", &u), Some(0.0));
+        assert_eq!(price_list_date(cost_usd("mystery-9", &u)), None);
+        assert_eq!(price_list_date(None), None);
     }
 
     #[test]

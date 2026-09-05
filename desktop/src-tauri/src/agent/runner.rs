@@ -1080,6 +1080,7 @@ async fn run_loop(ctx: RunContext, provider: Box<dyn Provider>) {
     let actions = ctx.proposed.lock().await.clone();
     events::actions_proposed(&ctx.app, &ctx.run_id, &actions);
 
+    let cost = pricing::cost_usd(&ctx.model, &usage);
     let run_usage = RunUsage {
         input_tokens: usage.input,
         output_tokens: usage.output,
@@ -1089,7 +1090,8 @@ async fn run_loop(ctx: RunContext, provider: Box<dyn Provider>) {
         tool_calls,
         elapsed_ms: started_at.elapsed().as_millis() as u64,
         cache_hit_pct: usage.cache_hit_pct(),
-        cost_usd: pricing::cost_usd(&ctx.model, &usage),
+        cost_usd: cost,
+        price_list_date: pricing::price_list_date(cost),
     };
     events::finished(&ctx.app, &ctx.run_id, ok, stop, &final_text, &run_usage);
 }
