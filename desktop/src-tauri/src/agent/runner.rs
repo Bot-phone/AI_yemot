@@ -1,7 +1,7 @@
 //! The agent loop and its three Tauri commands.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -33,14 +33,11 @@ const RUN_BUDGET: Duration = Duration::from_secs(600);
 const MAX_ATTEMPTS: u32 = 4;
 const TREE_LINES: usize = 20;
 
-/// Above this the oldest tool results are collapsed; above the hard limit the
-/// run stops rather than paying for a prompt that no longer fits its purpose.
-pub const CONTEXT_SOFT_LIMIT: usize = 60_000;
+/// Above this the run stops rather than paying for a prompt that no longer
+/// fits its purpose. History is never rewritten: collapsing old tool results
+/// invalidates the cached prefix, and re-reading the whole prompt uncached
+/// costs more than the tokens it saves.
 pub const CONTEXT_HARD_LIMIT: usize = 150_000;
-/// Collapsing rewrites the cached prefix, so it may not happen every turn.
-pub const COLLAPSE_EVERY_N_TURNS: u32 = 3;
-/// Tool results of the last two turns are always kept verbatim.
-const KEEP_LAST_TURNS: usize = 2;
 
 /// The same call, a third time, is a loop — not a retry.
 pub const LOOP_LIMIT: u32 = 2;
@@ -122,40 +119,6 @@ pub fn estimate_context(system: &[String], messages: &[Message]) -> usize {
     total
 }
 
-fn placeholder(name: &str, content: &str) -> String {
-    let head: String = content
-        .chars()
-        .take(60)
-        .map(|c| if c == '\n' { ' ' } else { c })
-        .collect();
-    format!("(תוצאה קוצרה: {} {})", name, head.trim())
-}
-
-/// Collapse the *content* of tool results older than the last `KEEP_LAST_TURNS`
-/// exchanges. The blocks themselves stay: dropping one half of a
-/// tool_use/tool_result pair is a 400 on every provider.
-/// Returns how many results were collapsed.
-pub fn collapse_old_tool_results(messages: &mut [Message], keep_last_turns: usize) -> usize {
-    let protected = keep_last_turns * 2;
-    if messages.len() <= protected + 1 {
-        return 0;
-    }
-    let cutoff = messages.len() - protected;
-    let mut collapsed = 0;
-    for m in messages.iter_mut().take(cutoff) {
-        for b in m.content.iter_mut() {
-            if let ContentBlock::ToolResult { name, content, .. } = b {
-                if content.starts_with("(תוצאה קוצרה:") {
-                    continue;
-                }
-                *content = placeholder(name, content);
-                collapsed += 1;
-            }
-        }
-    }
-    collapsed
-}
-
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -164,11 +127,35 @@ pub struct RunHandle {
     pub cancel: CancellationToken,
     pub proposed: Arc<Mutex<Vec<ProposedAction>>>,
     pub client: Arc<YemotClient>,
+    /// Set when `run_loop` returns. The handle deliberately stays in the
+    /// registry afterwards: approval happens *after* `agent:finished`, and it
+    /// needs both the proposed actions and the authenticated Yemot client.
+    pub finished: Arc<AtomicBool>,
+}
+
+impl RunHandle {
+    pub fn is_finished(&self) -> bool {
+        self.finished.load(Ordering::SeqCst)
+    }
 }
 
 #[derive(Default)]
 pub struct AgentRegistry {
     pub runs: Mutex<HashMap<String, RunHandle>>,
+}
+
+impl AgentRegistry {
+    /// Register a new run. Rejected only while an *unfinished* run exists;
+    /// handles of finished runs are evicted here, which is what bounds the map.
+    pub async fn claim(&self, run_id: &str, handle: RunHandle) -> Result<(), String> {
+        let mut runs = self.runs.lock().await;
+        if runs.values().any(|h| !h.is_finished()) {
+            return Err("ריצה אחרת פעילה כרגע. בטל אותה לפני התחלת ריצה חדשה.".to_string());
+        }
+        runs.clear(); // whatever is left has finished — its actions are stale now
+        runs.insert(run_id.to_string(), handle);
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -219,24 +206,22 @@ pub async fn start_agent_run(
     )?;
     let model = providers::resolve_model(&payload.provider, &payload.model);
 
-    let mut runs = registry.runs.lock().await;
-    if !runs.is_empty() {
-        return Err("ריצה אחרת פעילה כרגע. בטל אותה לפני התחלת ריצה חדשה.".to_string());
-    }
-
     let run_id = new_run_id();
     let cancel = CancellationToken::new();
     let proposed = Arc::new(Mutex::new(Vec::new()));
     let client = Arc::new(YemotClient::new(payload.yemot_token.clone()));
-    runs.insert(
-        run_id.clone(),
-        RunHandle {
-            cancel: cancel.clone(),
-            proposed: proposed.clone(),
-            client: client.clone(),
-        },
-    );
-    drop(runs);
+    let finished = Arc::new(AtomicBool::new(false));
+    registry
+        .claim(
+            &run_id,
+            RunHandle {
+                cancel: cancel.clone(),
+                proposed: proposed.clone(),
+                client: client.clone(),
+                finished: finished.clone(),
+            },
+        )
+        .await?;
 
     let ctx = RunContext {
         app: app.clone(),
@@ -252,13 +237,11 @@ pub async fn start_agent_run(
     };
 
     tauri::async_runtime::spawn(async move {
-        let id = ctx.run_id.clone();
-        let handle = ctx.app.clone();
         run_loop(ctx, provider).await;
-        // A finished run must free the slot even if it ended badly.
-        if let Some(reg) = tauri::Manager::try_state::<AgentRegistry>(&handle) {
-            reg.runs.lock().await.remove(&id);
-        }
+        // The handle is NOT removed: approval arrives after `agent:finished`
+        // and still needs it. Marking it finished frees the slot; the next run
+        // evicts it.
+        finished.store(true, Ordering::SeqCst);
     });
 
     Ok(AgentRunStarted { run_id })
@@ -271,6 +254,8 @@ pub async fn cancel_agent_run(
 ) -> Result<(), String> {
     let runs = registry.runs.lock().await;
     match runs.get(&run_id) {
+        // Cancelling a run that already ended is what the user meant anyway.
+        Some(h) if h.is_finished() => Ok(()),
         Some(h) => {
             h.cancel.cancel();
             Ok(())
@@ -442,7 +427,6 @@ async fn run_loop(ctx: RunContext, provider: Box<dyn Provider>) {
     let mut stop = "max_turns";
     let mut ok = true;
     let mut guard = LoopGuard::default();
-    let mut last_collapse_turn: u32 = 0;
 
     for turn in 1..=MAX_TURNS {
         if ctx.cancel.is_cancelled() {
@@ -456,9 +440,9 @@ async fn run_loop(ctx: RunContext, provider: Box<dyn Provider>) {
         }
         turns_done = turn;
 
-        // Context hygiene, before the prompt is assembled.
-        let size = estimate_context(&system, &messages);
-        if size > CONTEXT_HARD_LIMIT {
+        // Context hygiene, before the prompt is assembled. Nothing is rewritten
+        // — an over-long conversation is stopped, not silently truncated.
+        if estimate_context(&system, &messages) > CONTEXT_HARD_LIMIT {
             events::error(
                 &ctx.app,
                 &ctx.run_id,
@@ -468,12 +452,6 @@ async fn run_loop(ctx: RunContext, provider: Box<dyn Provider>) {
             stop = "truncated";
             ok = false;
             break;
-        }
-        if size > CONTEXT_SOFT_LIMIT
-            && (last_collapse_turn == 0 || turn - last_collapse_turn >= COLLAPSE_EVERY_N_TURNS)
-            && collapse_old_tool_results(&mut messages, KEEP_LAST_TURNS) > 0
-        {
-            last_collapse_turn = turn;
         }
 
         events::turn_start(&ctx.app, &ctx.run_id, turn, MAX_TURNS);
@@ -486,7 +464,7 @@ async fn run_loop(ctx: RunContext, provider: Box<dyn Provider>) {
             turn,
         };
 
-        let response = match call_with_retry(&ctx, provider.as_ref(), &req).await {
+        let response = match call_with_retry(&ctx, provider.as_ref(), &req, started_at).await {
             Ok(r) => r,
             Err(ProviderError::Cancelled) => {
                 stop = "cancelled";
@@ -732,10 +710,17 @@ pub fn backoff_ms(attempt: u32, retry_after: Option<u64>) -> u64 {
     jitter(1000u64 << (attempt.saturating_sub(1)).min(3))
 }
 
+/// Backoff sleeps are part of the run budget: waiting 8s for a retry that can
+/// only start after the deadline burns the user's time for nothing.
+pub fn budget_allows_retry(elapsed: Duration, wait_ms: u64) -> bool {
+    elapsed + Duration::from_millis(wait_ms) <= RUN_BUDGET
+}
+
 async fn call_with_retry(
     ctx: &RunContext,
     provider: &dyn Provider,
     req: &ProviderRequest,
+    started_at: Instant,
 ) -> Result<ProviderResponse, ProviderError> {
     let mut last: ProviderError = ProviderError::Transient("—".to_string());
     for attempt in 1..=MAX_ATTEMPTS {
@@ -752,6 +737,9 @@ async fn call_with_retry(
                     _ => None,
                 };
                 let wait = backoff_ms(attempt, retry_after);
+                if !budget_allows_retry(started_at.elapsed(), wait) {
+                    return Err(e);
+                }
                 events::retry(
                     &ctx.app,
                     &ctx.run_id,
@@ -1088,62 +1076,96 @@ mod tests {
     }
 
     #[test]
-    fn collapse_keeps_the_last_two_turns_and_both_halves_of_every_pair() {
-        let mut messages = vec![Message::user_text("בקשה")];
-        for i in 0..4 {
-            messages.extend(tool_pair(
-                &format!("t{}", i),
-                "search_knowledge",
-                &format!("תוצאה ארוכה מאוד מספר {} {}", i, "y".repeat(500)),
-            ));
-        }
-        let before_len = messages.len();
-        let n = collapse_old_tool_results(&mut messages, 2);
-        assert_eq!(messages.len(), before_len, "no message may be dropped");
-        assert_eq!(n, 2, "the last two exchanges keep their results verbatim");
-
-        let bodies: Vec<String> = messages
-            .iter()
-            .flat_map(|m| m.content.iter())
-            .filter_map(|b| match b {
-                ContentBlock::ToolResult { content, .. } => Some(content.clone()),
-                _ => None,
-            })
-            .collect();
-        assert!(bodies[0].starts_with("(תוצאה קוצרה: search_knowledge"));
-        assert!(bodies[0].chars().count() < 110);
-        assert!(bodies[1].starts_with("(תוצאה קוצרה: search_knowledge"));
-        assert!(bodies[2].contains("yyyy"), "the last two results stay verbatim");
-        assert!(bodies[3].contains("yyyy"));
-
-        // every tool_use still has its tool_result
-        let uses = messages
-            .iter()
-            .flat_map(|m| m.content.iter())
-            .filter(|b| matches!(b, ContentBlock::ToolUse { .. }))
-            .count();
-        assert_eq!(uses, 4);
-
-        // and collapsing twice is a no-op
-        assert_eq!(collapse_old_tool_results(&mut messages, 2), 0);
-    }
-
-    #[test]
-    fn collapse_does_nothing_on_a_short_conversation() {
-        let mut messages = vec![Message::user_text("בקשה")];
-        messages.extend(tool_pair("t0", "lookup_param", "type=menu"));
-        assert_eq!(collapse_old_tool_results(&mut messages, 2), 0);
-    }
-
-    #[test]
-    fn context_limits_are_ordered() {
-        assert_eq!(CONTEXT_SOFT_LIMIT, 60_000);
+    fn only_the_hard_limit_bounds_the_context() {
+        // The single context lever: a long conversation is stopped, never
+        // rewritten — rewriting would invalidate the cached prefix.
         assert_eq!(CONTEXT_HARD_LIMIT, 150_000);
+        let mut messages = vec![Message::user_text("בקשה")];
+        for i in 0..6 {
+            messages.extend(tool_pair(&format!("t{}", i), "search_knowledge", &"y".repeat(500)));
+        }
+        assert!(estimate_context(&[], &messages) < CONTEXT_HARD_LIMIT);
     }
 
     #[test]
     fn run_id_is_prefixed() {
         assert!(new_run_id().starts_with("r_"));
         assert_ne!(new_run_id(), "r_0");
+    }
+
+    // -- retry budget ------------------------------------------------------
+
+    #[test]
+    fn a_backoff_that_outlasts_the_run_budget_is_not_slept() {
+        assert!(budget_allows_retry(Duration::from_secs(10), 8000));
+        // 599s spent + an 8s backoff would wake up past the deadline.
+        assert!(!budget_allows_retry(RUN_BUDGET - Duration::from_secs(1), 8000));
+        assert!(budget_allows_retry(RUN_BUDGET, 0));
+        assert!(!budget_allows_retry(RUN_BUDGET + Duration::from_secs(1), 0));
+    }
+
+    // -- run lifecycle -----------------------------------------------------
+
+    fn handle(finished: bool) -> (RunHandle, Arc<Mutex<Vec<ProposedAction>>>, Arc<AtomicBool>) {
+        let proposed = Arc::new(Mutex::new(Vec::new()));
+        let flag = Arc::new(AtomicBool::new(finished));
+        (
+            RunHandle {
+                cancel: CancellationToken::new(),
+                proposed: proposed.clone(),
+                client: Arc::new(YemotClient::new("t")),
+                finished: flag.clone(),
+            },
+            proposed,
+            flag,
+        )
+    }
+
+    fn action(id: &str) -> ProposedAction {
+        ProposedAction {
+            id: id.to_string(),
+            tool_use_id: "toolu_1".to_string(),
+            kind: "set_extension_params".to_string(),
+            path: "/3".to_string(),
+            canon_path: "ivr2:/3".to_string(),
+            params: vec![ActionParam { key: "type".into(), value: "menu".into() }],
+            contents: None,
+            reason: "בדיקה".to_string(),
+            risk: "low".to_string(),
+            exists: true,
+            diff: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_finished_run_stays_approvable_until_the_next_run_starts() {
+        let reg = AgentRegistry::default();
+        let (h, proposed, flag) = handle(false);
+        reg.claim("r_1", h).await.unwrap();
+
+        // A second run is refused while the first is still going.
+        let (h2, _, _) = handle(false);
+        assert!(reg.claim("r_2", h2).await.is_err());
+
+        // The run ends with actions waiting for approval.
+        proposed.lock().await.push(action("a_1"));
+        flag.store(true, Ordering::SeqCst);
+
+        // The handle is still there — this is what `approve_actions` reads.
+        {
+            let runs = reg.runs.lock().await;
+            let kept = runs.get("r_1").expect("finished handle must survive");
+            assert!(kept.is_finished());
+            assert_eq!(kept.proposed.lock().await.len(), 1);
+        }
+
+        // Starting a new run is allowed now, and evicts the finished handle.
+        let (h3, _, _) = handle(false);
+        reg.claim("r_3", h3).await.unwrap();
+        let runs = reg.runs.lock().await;
+        assert!(runs.get("r_1").is_none(), "the finished handle must be evicted");
+        assert_eq!(runs.len(), 1);
+        assert!(runs.contains_key("r_3"));
     }
 }

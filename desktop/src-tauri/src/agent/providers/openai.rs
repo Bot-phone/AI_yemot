@@ -16,6 +16,10 @@ use super::{
 
 const MAX_TOKENS: u64 = 8000;
 
+/// Stable across every turn of every run so OpenAI routes the request to the
+/// machine that already holds this prefix in its cache.
+const PROMPT_CACHE_KEY: &str = "ai-yemot-agent";
+
 /// Marker input handed to the dispatcher when `arguments` was not valid JSON.
 pub const INVALID_ARGUMENTS_KEY: &str = "__invalid_arguments";
 
@@ -145,14 +149,29 @@ pub fn messages_json(system: &[String], messages: &[Message]) -> Value {
     Value::Array(out)
 }
 
+/// Reasoning models (o-series, GPT-5) rejected `max_tokens` in favour of
+/// `max_completion_tokens`, and accept only the default temperature.
+pub fn is_reasoning_model(model: &str) -> bool {
+    let m = model.trim().to_ascii_lowercase();
+    ["o1", "o3", "o4", "gpt-5"].iter().any(|p| m.starts_with(p))
+}
+
 pub fn build_body(req: &ProviderRequest) -> Value {
-    json!({
-        "model": req.model,
-        "messages": messages_json(&req.system, &req.messages),
-        "tools": tools_json(&req.tools),
-        "temperature": 0,
-        "max_tokens": MAX_TOKENS,
-    })
+    let mut body = Map::new();
+    body.insert("model".to_string(), json!(req.model));
+    body.insert(
+        "messages".to_string(),
+        messages_json(&req.system, &req.messages),
+    );
+    body.insert("tools".to_string(), tools_json(&req.tools));
+    body.insert("prompt_cache_key".to_string(), json!(PROMPT_CACHE_KEY));
+    if is_reasoning_model(&req.model) {
+        body.insert("max_completion_tokens".to_string(), json!(MAX_TOKENS));
+    } else {
+        body.insert("temperature".to_string(), json!(0));
+        body.insert("max_tokens".to_string(), json!(MAX_TOKENS));
+    }
+    Value::Object(body)
 }
 
 // ---------------------------------------------------------------------------
@@ -337,6 +356,8 @@ mod tests {
         let b = build_body(&req());
         assert_eq!(b["temperature"], json!(0));
         assert_eq!(b["max_tokens"], json!(8000));
+        assert_eq!(b["prompt_cache_key"], json!("ai-yemot-agent"));
+        assert!(b.get("max_completion_tokens").is_none());
         assert_eq!(b["tools"][0]["type"], json!("function"));
         assert_eq!(b["tools"][0]["function"]["strict"], json!(true));
         assert_eq!(b["tools"][0]["function"]["name"], json!("lookup_param"));
@@ -353,6 +374,32 @@ mod tests {
         assert_eq!(m[3]["role"], json!("tool"));
         assert_eq!(m[3]["tool_call_id"], json!("call_1"));
         assert_eq!(m[3]["content"], json!("type=menu"));
+    }
+
+    #[test]
+    fn reasoning_models_swap_the_token_cap_and_drop_temperature() {
+        for m in ["o1-mini", "o3", "o4-mini", "gpt-5", "gpt-5.1-2026-01-01"] {
+            let mut r = req();
+            r.model = m.to_string();
+            let b = build_body(&r);
+            assert_eq!(b["max_completion_tokens"], json!(8000), "{}", m);
+            assert!(b.get("max_tokens").is_none(), "{}", m);
+            assert!(b.get("temperature").is_none(), "{}", m);
+            assert_eq!(b["prompt_cache_key"], json!("ai-yemot-agent"), "{}", m);
+            assert!(is_reasoning_model(m));
+        }
+        for m in ["gpt-4.1-mini", "gpt-4o", "llama-3.3-70b-versatile"] {
+            assert!(!is_reasoning_model(m), "{}", m);
+        }
+    }
+
+    #[test]
+    fn the_cache_key_is_stable_across_turns() {
+        let a = build_body(&req());
+        let mut later = req();
+        later.turn = 9;
+        let b = build_body(&later);
+        assert_eq!(a["prompt_cache_key"], b["prompt_cache_key"]);
     }
 
     #[test]

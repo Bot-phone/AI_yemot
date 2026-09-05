@@ -15,12 +15,32 @@ pub struct Price {
 
 const TABLE: &[(&str, Price)] = &[
     (
+        "claude-fable-5-1",
+        Price { input: 10.0, cache_read: 0.25, cache_write: 12.5, output: 50.0 },
+    ),
+    (
         "claude-opus-5",
+        Price { input: 5.0, cache_read: 0.5, cache_write: 6.25, output: 25.0 },
+    ),
+    (
+        "claude-opus-4-8",
+        Price { input: 5.0, cache_read: 0.5, cache_write: 6.25, output: 25.0 },
+    ),
+    (
+        "claude-opus-4-7",
+        Price { input: 5.0, cache_read: 0.5, cache_write: 6.25, output: 25.0 },
+    ),
+    (
+        "claude-opus-4-6",
         Price { input: 5.0, cache_read: 0.5, cache_write: 6.25, output: 25.0 },
     ),
     (
         "claude-sonnet-5",
         Price { input: 2.0, cache_read: 0.2, cache_write: 2.5, output: 10.0 },
+    ),
+    (
+        "claude-sonnet-4-6",
+        Price { input: 3.0, cache_read: 0.3, cache_write: 3.75, output: 15.0 },
     ),
     (
         "claude-haiku-4-5",
@@ -45,6 +65,11 @@ const TABLE: &[(&str, Price)] = &[
     (
         "gpt-4o",
         Price { input: 2.5, cache_read: 1.25, cache_write: 0.0, output: 10.0 },
+    ),
+    // groq — no prompt cache discount, so cache_read is priced as input.
+    (
+        "llama-3.3-70b-versatile",
+        Price { input: 0.59, cache_read: 0.59, cache_write: 0.0, output: 0.79 },
     ),
 ];
 
@@ -102,8 +127,31 @@ mod tests {
 
     #[test]
     fn unknown_model_is_none() {
-        assert!(cost_usd("llama-3.3-70b-versatile", &Usage::default()).is_none());
+        assert!(cost_usd("mystery-9", &Usage::default()).is_none());
         assert!(price_for("mystery-9").is_none());
+    }
+
+    #[test]
+    fn the_newer_claude_models_are_priced() {
+        let u = Usage { input: 1_000_000, output: 1_000_000, cache_read: 0, cache_write: 0 };
+        assert_eq!(cost_usd("claude-fable-5-1", &u), Some(60.0));
+        assert_eq!(cost_usd("claude-opus-4-8", &u), Some(30.0));
+        assert_eq!(cost_usd("claude-opus-4-7", &u), Some(30.0));
+        assert_eq!(cost_usd("claude-opus-4-6", &u), Some(30.0));
+        assert_eq!(cost_usd("claude-sonnet-4-6", &u), Some(18.0));
+        assert_eq!(cost_usd("llama-3.3-70b-versatile", &u), Some(1.38));
+    }
+
+    #[test]
+    fn fable_is_not_matched_by_any_other_prefix() {
+        // `claude-fable-5-1` shares no prefix with opus/sonnet — a mismatch here
+        // would silently price a $10/M model as a $5/M one.
+        assert_eq!(price_for("claude-fable-5-1").unwrap().input, 10.0);
+        assert_eq!(price_for("claude-fable-5-1-20260401").unwrap().input, 10.0);
+        assert_ne!(price_for("claude-opus-4-8"), price_for("claude-fable-5-1"));
+        // and the longest prefix still wins inside the claude family
+        assert_eq!(price_for("claude-sonnet-4-6-20260101"), price_for("claude-sonnet-4-6"));
+        assert_ne!(price_for("claude-sonnet-4-6"), price_for("claude-sonnet-5"));
     }
 
     #[test]
