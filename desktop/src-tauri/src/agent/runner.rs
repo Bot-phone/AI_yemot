@@ -17,6 +17,7 @@ use crate::yemot::{self, ParamOutcome, YemotClient};
 use super::events::{
     self, ActionApplyResult, ActionParam, AgentRunStarted, ProposedAction, RunUsage,
 };
+use super::history::{self, ChainState, TaskRecord};
 use super::prompt;
 use super::providers::{self, Provider};
 use super::tools::{self, ToolCtx, ToolOutcome};
@@ -143,6 +144,11 @@ pub struct RunHandle {
     /// continuation replays this run's transcript — which still advertises
     /// these ids — so it must inherit the list or those ids stop resolving.
     pub attachments: Arc<Vec<Attachment>>,
+    /// The task this run belongs to: its id, its instruction chain and the
+    /// usage totals of every run in it. A continuation of a *live* parent
+    /// takes the chain from here; a continuation of a forgotten one reads the
+    /// same fields back from the saved record.
+    pub chain: Arc<Mutex<ChainState>>,
 }
 
 impl RunHandle {
@@ -187,6 +193,15 @@ pub struct AgentRunPayload {
     /// Audio files the user picked for this task. Absent = none.
     #[serde(default)]
     pub attachments: Vec<Attachment>,
+    /// Keep this task in the local history ("היסטוריית משימות"). Default on;
+    /// when off nothing is written and an existing record for the chain is
+    /// left exactly as it was.
+    #[serde(default = "default_true")]
+    pub save_history: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// One file the user attached to a task. `local_path` stays in Rust: it is the
@@ -333,8 +348,16 @@ pub async fn start_agent_run(
     let model = providers::resolve_model(&payload.provider, &payload.model);
 
     let client = Arc::new(YemotClient::new(payload.yemot_token.clone()));
-    let (ctx, finished) = new_run(&app, &payload, model, client.clone(), registry).await?;
+    // A fresh task: `new_run` stamps the chain's `task_id` with this run's id.
+    let chain = ChainState {
+        task_id: String::new(),
+        created_at_ms: history::now_ms(),
+        instructions: vec![payload.prompt.clone()],
+        usage: Default::default(),
+    };
+    let (ctx, finished) = new_run(&app, &payload, model, client.clone(), registry, chain).await?;
     let run_id = ctx.run_id.clone();
+    let task_id = ctx.task_id.clone();
 
     let prompt = payload.prompt.clone();
     let include_tree = payload.include_tree;
@@ -349,7 +372,7 @@ pub async fn start_agent_run(
         run_loop(ctx, provider, initial).await;
     });
 
-    Ok(AgentRunStarted { run_id })
+    Ok(AgentRunStarted { run_id, task_id })
 }
 
 /// Continue a finished task: same conversation, one more instruction.
@@ -374,25 +397,66 @@ pub async fn continue_agent_run(
     validate_attachments(&mut payload.attachments)?;
 
     // Everything the parent leaves behind is read here, before the claim below
-    // evicts its handle.
-    let (history, parent_actions, parent_attachments) = {
+    // evicts its handle. A live parent is the fast path; once its handle is
+    // gone (a later run claimed the slot, or the app was restarted) the same
+    // material comes back from the saved task record.
+    let live = {
         let runs = registry.runs.lock().await;
-        let parent = runs
-            .get(&parent_run_id)
-            .ok_or_else(|| "המשימה הקודמת אינה זמינה עוד — התחל משימה חדשה".to_string())?;
-        if !parent.is_finished() {
-            return Err("המשימה הקודמת עדיין רצה".to_string());
+        match runs.get(&parent_run_id) {
+            Some(p) if !p.is_finished() => {
+                return Err("המשימה הקודמת עדיין רצה".to_string())
+            }
+            Some(p) => Some((
+                p.transcript.lock().await.clone(),
+                p.proposed.lock().await.clone(),
+                p.attachments.as_ref().clone(),
+                p.chain.lock().await.clone(),
+            )),
+            None => None,
         }
-        let history = parent.transcript.lock().await.clone();
-        let actions = parent.proposed.lock().await.clone();
-        (history, actions, parent.attachments.clone())
     };
-    if history.is_empty() {
+    let (past, parent_actions, parent_attachments, mut chain, applied, undone) = match live {
+        Some((transcript, actions, attachments, chain)) => {
+            let (applied, undone) = {
+                let map = write_state().lock().await;
+                match map.get(&parent_run_id) {
+                    Some(s) => (s.applied.clone(), s.undone.clone()),
+                    None => (HashSet::new(), HashSet::new()),
+                }
+            };
+            (transcript, actions, attachments, chain, applied, undone)
+        }
+        None => {
+            let rec = history::tasks_dir(&app)
+                .ok()
+                .and_then(|dir| history::load_for_parent(&dir, &parent_run_id))
+                .ok_or_else(|| "המשימה הקודמת אינה זמינה עוד — התחל משימה חדשה".to_string())?;
+            // The record knows what was applied. An undone action is not in
+            // that set, so a resumed task reports it as "לא אושר" rather
+            // than "בוטל" — the write itself is already reversed either way.
+            let applied: HashSet<String> = rec.applied_action_ids.iter().cloned().collect();
+            let chain = ChainState {
+                task_id: rec.task_id,
+                created_at_ms: rec.created_at_ms,
+                instructions: rec.instructions,
+                usage: rec.usage,
+            };
+            (
+                rec.transcript,
+                rec.actions,
+                rec.attachments,
+                chain,
+                applied,
+                HashSet::new(),
+            )
+        }
+    };
+    if past.is_empty() {
         return Err("אין תמלול למשימה הקודמת — התחל משימה חדשה".to_string());
     }
 
     let system = prompt::system_blocks(&payload.provider);
-    if estimate_context(&system, &history) > CONTEXT_HARD_LIMIT {
+    if estimate_context(&system, &past) > CONTEXT_HARD_LIMIT {
         return Err("המשימה ארוכה מדי להמשך, התחל משימה חדשה".to_string());
     }
 
@@ -404,14 +468,7 @@ pub async fn continue_agent_run(
     )?;
     let model = providers::resolve_model(&payload.provider, &payload.model);
 
-    let status = {
-        let map = write_state().lock().await;
-        let (applied, undone) = match map.get(&parent_run_id) {
-            Some(s) => (s.applied.clone(), s.undone.clone()),
-            None => (HashSet::new(), HashSet::new()),
-        };
-        status_block(&parent_actions, &applied, &undone)
-    };
+    let status = status_block(&parent_actions, &applied, &undone);
 
     // The replayed transcript still advertises the parent's attachment ids, so
     // the continuation inherits its list; without this an `upload_audio_file`
@@ -419,11 +476,15 @@ pub async fn continue_agent_run(
     let carried = carry_attachments(&parent_attachments, &payload.attachments);
     payload.attachments = carried.list;
 
-    let client = Arc::new(YemotClient::new(payload.yemot_token.clone()));
-    let (ctx, finished) = new_run(&app, &payload, model, client, registry).await?;
-    let run_id = ctx.run_id.clone();
+    // The chain continues under the parent's task id, one instruction longer.
+    chain.instructions.push(payload.prompt.clone());
 
-    let mut initial = history;
+    let client = Arc::new(YemotClient::new(payload.yemot_token.clone()));
+    let (ctx, finished) = new_run(&app, &payload, model, client, registry, chain).await?;
+    let run_id = ctx.run_id.clone();
+    let task_id = ctx.task_id.clone();
+
+    let mut initial = past;
     initial.push(Message::user_text(continuation_text(
         &status,
         &payload.prompt,
@@ -438,7 +499,7 @@ pub async fn continue_agent_run(
         run_loop(ctx, provider, initial).await;
     });
 
-    Ok(AgentRunStarted { run_id })
+    Ok(AgentRunStarted { run_id, task_id })
 }
 
 /// Register a run and build its context. Shared by a fresh run and a
@@ -449,8 +510,18 @@ async fn new_run(
     model: String,
     client: Arc<YemotClient>,
     registry: State<'_, AgentRegistry>,
+    mut chain: ChainState,
 ) -> Result<(RunContext, Arc<AtomicBool>), String> {
     let run_id = new_run_id();
+    // The task id is the run id of the chain's *first* run.
+    if chain.task_id.is_empty() {
+        chain.task_id = run_id.clone();
+    }
+    if chain.created_at_ms == 0 {
+        chain.created_at_ms = history::now_ms();
+    }
+    let task_id = chain.task_id.clone();
+    let chain = Arc::new(Mutex::new(chain));
     let cancel = CancellationToken::new();
     let proposed = Arc::new(Mutex::new(Vec::new()));
     let transcript = Arc::new(Mutex::new(Vec::new()));
@@ -468,6 +539,7 @@ async fn new_run(
                 transcript: transcript.clone(),
                 audio: audio.clone(),
                 attachments: attachments.clone(),
+                chain: chain.clone(),
             },
         )
         .await?;
@@ -476,6 +548,7 @@ async fn new_run(
         RunContext {
             app: app.clone(),
             run_id,
+            task_id,
             provider_name: payload.provider.clone(),
             model,
             auto_apply: payload.auto_apply,
@@ -485,6 +558,8 @@ async fn new_run(
             transcript,
             audio,
             attachments,
+            chain,
+            save_history: payload.save_history,
         },
         finished,
     ))
@@ -1035,6 +1110,7 @@ pub async fn approve_actions(
     for r in &results {
         events::action_applied(&app, &run_id, r);
     }
+    sync_history_applied(&app, &run_id).await;
     Ok(results)
 }
 
@@ -1045,7 +1121,11 @@ pub async fn approve_actions(
 /// (`key=`), not removed. A file that did not exist before an `upload_text_file`
 /// is not deleted either — file deletion (`FileAction`) is a denied capability.
 #[tauri::command]
-pub async fn undo_action(run_id: String, action_id: String) -> Result<ActionApplyResult, String> {
+pub async fn undo_action(
+    app: AppHandle,
+    run_id: String,
+    action_id: String,
+) -> Result<ActionApplyResult, String> {
     let (client, record) = {
         let map = write_state().lock().await;
         let state = map
@@ -1179,6 +1259,8 @@ pub async fn undo_action(run_id: String, action_id: String) -> Result<ActionAppl
             // which is also what the continuation status block reports.
             state.undone.insert(action_id.clone());
         }
+        drop(map);
+        sync_history_applied(&app, &run_id).await;
     }
     Ok(result)
 }
@@ -1534,6 +1616,8 @@ fn refusal(a: &ProposedAction, message: &str) -> ActionApplyResult {
 struct RunContext {
     app: AppHandle,
     run_id: String,
+    /// The chain this run belongs to (the `run_id` of its first run).
+    task_id: String,
     provider_name: String,
     model: String,
     auto_apply: bool,
@@ -1544,6 +1628,9 @@ struct RunContext {
     transcript: Arc<Mutex<Vec<Message>>>,
     audio: Arc<Mutex<HashMap<String, Attachment>>>,
     attachments: Arc<Vec<Attachment>>,
+    /// Instruction chain + chain-wide usage totals, shared with the handle.
+    chain: Arc<Mutex<ChainState>>,
+    save_history: bool,
 }
 
 /// One agent run over `messages`. A fresh run passes a single user message; a
@@ -1731,6 +1818,24 @@ async fn run_loop(ctx: RunContext, provider: Box<dyn Provider>, messages: Vec<Me
     *ctx.transcript.lock().await = messages;
 
     let cost = pricing::cost_usd(&ctx.model, &usage);
+
+    // The local task record — written for every run with a transcript, ok or
+    // not, cancelled included, so the task can be resumed after a restart.
+    save_task_record(
+        &ctx,
+        RunOutcome {
+            actions: &actions,
+            usage: &usage,
+            turns: turns_done,
+            tool_calls,
+            cost,
+            ok,
+            stop,
+            final_text: &final_text,
+        },
+    )
+    .await;
+
     let run_usage = RunUsage {
         input_tokens: usage.input,
         output_tokens: usage.output,
@@ -1743,7 +1848,84 @@ async fn run_loop(ctx: RunContext, provider: Box<dyn Provider>, messages: Vec<Me
         cost_usd: cost,
         price_list_date: pricing::price_list_date(cost),
     };
-    events::finished(&ctx.app, &ctx.run_id, ok, stop, &final_text, &run_usage);
+    events::finished(
+        &ctx.app,
+        &ctx.run_id,
+        &ctx.task_id,
+        ok,
+        stop,
+        &final_text,
+        &run_usage,
+    );
+}
+
+/// What one finished run contributes to its task record.
+struct RunOutcome<'a> {
+    actions: &'a [ProposedAction],
+    usage: &'a Usage,
+    turns: u32,
+    tool_calls: u32,
+    cost: Option<f64>,
+    ok: bool,
+    stop: &'a str,
+    final_text: &'a str,
+}
+
+/// Rewrite this task's record with the newest run of the chain.
+///
+/// Never fails the run: every error is logged inside `history` and swallowed.
+/// The file write itself happens on the blocking pool — the records are small,
+/// but a slow disk must not sit in the middle of the run's last await.
+async fn save_task_record(ctx: &RunContext, out: RunOutcome<'_>) {
+    let transcript = ctx.transcript.lock().await.clone();
+    if !history::should_save(ctx.save_history, &transcript) {
+        return;
+    }
+    // Approval happens *after* the run ends, so this is normally empty on a
+    // fresh save; `approve_actions` / `undo_action` refresh it afterwards.
+    let applied = {
+        let map = write_state().lock().await;
+        match map.get(&ctx.run_id) {
+            Some(s) => history::applied_ids(&s.applied, &s.undone),
+            None => Vec::new(),
+        }
+    };
+    let chain = {
+        let mut c = ctx.chain.lock().await;
+        c.usage.add_run(out.usage, out.turns, out.tool_calls, out.cost);
+        c.clone()
+    };
+    let record = TaskRecord {
+        task_id: chain.task_id,
+        last_run_id: ctx.run_id.clone(),
+        created_at_ms: chain.created_at_ms,
+        updated_at_ms: history::now_ms(),
+        provider: ctx.provider_name.clone(),
+        model: ctx.model.clone(),
+        instructions: chain.instructions,
+        final_text: out.final_text.to_string(),
+        ok: out.ok,
+        stop: out.stop.to_string(),
+        transcript,
+        attachments: ctx.attachments.as_ref().clone(),
+        actions: out.actions.to_vec(),
+        applied_action_ids: applied,
+        usage: chain.usage,
+    };
+    history::save_task(&ctx.app, ctx.save_history, record).await;
+}
+
+/// Push the run's applied-ids into its saved task record, so a task resumed
+/// from history reports בוצע / לא אושר instead of an empty status block.
+async fn sync_history_applied(app: &AppHandle, run_id: &str) {
+    let applied = {
+        let map = write_state().lock().await;
+        match map.get(run_id) {
+            Some(s) => history::applied_ids(&s.applied, &s.undone),
+            None => return,
+        }
+    };
+    history::sync_applied(app, run_id, applied).await;
 }
 
 /// One turn's tools: read-only ones together, mutating ones one at a time.
@@ -2443,6 +2625,7 @@ mod tests {
                 transcript: Arc::new(Mutex::new(Vec::new())),
                 audio: Arc::new(Mutex::new(HashMap::new())),
                 attachments: Arc::new(Vec::new()),
+                chain: Arc::new(Mutex::new(ChainState::default())),
             },
             proposed,
             flag,
@@ -2878,5 +3061,111 @@ mod tests {
         assert!(runs.get("r_1").is_none(), "the finished handle must be evicted");
         assert_eq!(runs.len(), 1);
         assert!(runs.contains_key("r_3"));
+    }
+
+    // --- task history ----------------------------------------------------
+
+    /// The whole `continue_agent_run` history branch, minus the Tauri handle:
+    /// a saved record must rebuild exactly the `initial` messages a live parent
+    /// would have produced — its transcript, then one user message carrying the
+    /// status of its proposals and the new instruction.
+    #[test]
+    fn a_continuation_from_history_replays_the_record() {
+        use crate::agent::history::{self, TaskRecord, TaskUsage};
+
+        let dir = std::env::temp_dir().join(format!("ai_yemot_cont_{}", new_run_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let applied_action = action("a_1");
+        let pending_action = action("a_2");
+        let rec = TaskRecord {
+            task_id: "r_first".into(),
+            last_run_id: "r_second".into(),
+            created_at_ms: 1,
+            updated_at_ms: 2,
+            provider: "claude".into(),
+            model: "claude-sonnet-4-5".into(),
+            instructions: vec!["הפוך את שלוחה 3 לתפריט".into()],
+            final_text: "בוצע".into(),
+            ok: true,
+            stop: "end_turn".into(),
+            transcript: vec![
+                Message::user_text("הפוך את שלוחה 3 לתפריט"),
+                Message {
+                    role: Role::Assistant,
+                    content: vec![ContentBlock::Text("הצעתי שינוי".into())],
+                },
+            ],
+            attachments: Vec::new(),
+            actions: vec![applied_action, pending_action],
+            applied_action_ids: vec!["a_1".into()],
+            usage: TaskUsage::default(),
+        };
+        history::save(&dir, &rec).unwrap();
+
+        // …exactly what the command does: resolve the parent by its run id
+        let loaded = history::load_for_parent(&dir, "r_second").expect("parent record");
+        let applied: HashSet<String> = loaded.applied_action_ids.iter().cloned().collect();
+        let status = status_block(&loaded.actions, &applied, &HashSet::new());
+        let mut initial = loaded.transcript.clone();
+        initial.push(Message::user_text(continuation_text(
+            &status,
+            "עכשיו הוסף הודעת פתיחה",
+            &[],
+            &[],
+        )));
+
+        assert_eq!(initial.len(), 3, "the parent transcript plus one message");
+        let last = match &initial[2].content[0] {
+            ContentBlock::Text(t) => t.clone(),
+            other => panic!("wrong block: {:?}", other),
+        };
+        assert!(last.contains("[מצב ההצעות הקודמות]"));
+        assert!(last.contains("a_1 /3: בוצע"));
+        assert!(last.contains("a_2 /3: לא אושר"));
+        assert!(last.contains("עכשיו הוסף הודעת פתיחה"));
+        // the chain continues under the parent's task id, one instruction longer
+        assert_eq!(loaded.task_id, "r_first");
+        let mut chain = ChainState {
+            task_id: loaded.task_id.clone(),
+            created_at_ms: loaded.created_at_ms,
+            instructions: loaded.instructions.clone(),
+            usage: loaded.usage.clone(),
+        };
+        chain.instructions.push("עכשיו הוסף הודעת פתיחה".into());
+        assert_eq!(chain.instructions.len(), 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn history_is_saved_unless_the_payload_turns_it_off() {
+        let base = serde_json::json!({
+            "provider": "claude", "model": "regular", "prompt": "x",
+            "api_key": "k", "yemot_token": "t"
+        });
+        let on: AgentRunPayload = serde_json::from_value(base.clone()).unwrap();
+        assert!(on.save_history, "history is on unless the user turns it off");
+
+        let mut off = base;
+        off["save_history"] = serde_json::json!(false);
+        let off: AgentRunPayload = serde_json::from_value(off).unwrap();
+        assert!(!off.save_history);
+
+        // and the gate the save point uses says so too
+        let transcript = vec![Message::user_text("x")];
+        assert!(crate::agent::history::should_save(on.save_history, &transcript));
+        assert!(!crate::agent::history::should_save(off.save_history, &transcript));
+    }
+
+    #[test]
+    fn a_run_started_carries_its_task_id() {
+        let v = serde_json::to_value(AgentRunStarted {
+            run_id: "r_2".into(),
+            task_id: "r_1".into(),
+        })
+        .unwrap();
+        assert_eq!(v["run_id"], serde_json::json!("r_2"));
+        assert_eq!(v["task_id"], serde_json::json!("r_1"));
     }
 }
