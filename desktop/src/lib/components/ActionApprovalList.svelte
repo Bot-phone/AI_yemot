@@ -76,6 +76,17 @@
   }
 
   /**
+   * A per-action failure message is whatever Rust handed the *model*: a dead
+   * Yemot session arrives as "SESSION_EXPIRED: … Stop and wait — do not retry.",
+   * which is an instruction to the agent, not something to show a person.
+   * @param {unknown} message
+   */
+  function resultMessage(message) {
+    const text = String(message ?? "");
+    return /^\s*session_expired\s*:/i.test(text) ? t("agent_session_expired") : text;
+  }
+
+  /**
    * Yemot's API cannot delete an uploaded file, so an audio upload carries no
    * undo record (contract R2) — the button would always fail.
    * @param {string} kind
@@ -304,7 +315,7 @@
               >
                 <div class="font-bold">
                   {res.ok ? `✓ ${t("action_ok")}` : `✗ ${t("action_failed")}`}
-                  {#if res.message}<span class="font-normal"> — {res.message}</span>{/if}
+                  {#if res.message}<span class="font-normal"> — {resultMessage(res.message)}</span>{/if}
                 </div>
                 {#if res.params && res.params.length > 0}
                   <ul class="mt-1 space-y-0.5">
@@ -315,7 +326,7 @@
                         <span class="text-slate-600">
                           {p.applied ? t("param_applied") : t("param_not_applied")}
                         </span>
-                        {#if p.note}<span class="text-slate-600">— {p.note}</span>{/if}
+                        {#if p.note}<span class="text-slate-600">— {resultMessage(p.note)}</span>{/if}
                       </li>
                     {/each}
                   </ul>

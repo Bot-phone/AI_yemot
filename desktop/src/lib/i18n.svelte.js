@@ -22,7 +22,6 @@ export const LOCALES = {
       knowledge_btn: "📚 בסיס ידע מקומי",
       update_available: "🚀 עדכון זמין: v{version}",
 
-      settings_title: "⚙️ הגדרות יעד וחיבור",
       target_mode: "אופן העיבוד (יעד)",
       mode_script: "🌐 סקריפט (GAS)",
       mode_direct: "⚡ ספק AI ישיר",
@@ -58,9 +57,6 @@ export const LOCALES = {
       hide: "הסתר",
       token_placeholder: "הזן טוקן מערכת...",
       check: "בדוק",
-      api_type_label: "מפתח AI",
-      api_system: "מפתח מערכת ברירת מחדל",
-      api_private: "מפתח API אישי",
       api_key_label: "מפתח API אישי",
       api_key_hint_direct: "חובה במצב ספק AI ישיר",
       api_key_hint_script: "אופציונלי — ללא מפתח ייעשה שימוש במפתח המוגדר בסקריפט (חובה למודל Pro)",
@@ -98,7 +94,6 @@ export const LOCALES = {
       preset_human_prompt:
         "הגדר שלוחה 4 לניתוב למענה אנושי בימים א-ה בין 9:00 ל-16:00, ומחוץ לשעות אלה השמע הודעה על שעות הפעילות והעבר להשארת הודעה.",
 
-      processing: "מבצע את המשימה…",
       propose_changes: "הצע שינויים",
       proposing_changes: "מבצע את המשימה…",
       preview_title: "📋 תצוגה מקדימה של הפעולות המוצעות",
@@ -131,14 +126,12 @@ export const LOCALES = {
       mfa_required: "נדרש אימות דו-שלבי (MFA)",
       comm_error: "שגיאת תקשורת: {error}",
       sending_code: "שולח קוד אימות...",
-      error: "שגיאה: {error}",
       enter_mfa_code: "נא להזין קוד אימות",
       verifying_code: "מאמת קוד...",
       mfa_success: "האימות הושלם בהצלחה!",
       enter_task: "נא לתאר את המשימה לביצוע בקו",
       enter_yemot_token: "נא להזין טוקן של ימות המשיח",
       sending_to_script: "שולח בקשה לסקריפט...",
-      processing_ai: "מעבד מול מודל ה-AI...",
       request_success: "הבקשה הושלמה בהצלחה!",
       request_failed: "אירעה שגיאה בביצוע הבקשה",
       no_actions_selected: "לא נבחרו פעולות לביצוע",
@@ -158,13 +151,11 @@ export const LOCALES = {
       agent_started_with: "הסוכן פועל · {provider} · {model}",
       agent_cancel: "עצור ריצה",
       agent_cancelling: "מבטל את הריצה...",
-      agent_cancelled: "הריצה בוטלה",
       agent_retry_notice: "המודל עמוס, מנסה שוב ({attempt}/{max})",
       agent_thinking: "ממתין לתשובת המודל...",
       agent_tool_running: "מבצע...",
       agent_ms: "{ms} מ״ש",
 
-      agent_finish_title: "סיכום המשימה",
       run_stats_line:
         "טוקנים: {in} נכנסים · {out} יוצאים · מטמון {cache}% · {turns} סבבים · {secs} שנ׳",
       run_cost_line: "עלות משוערת: ${cost} לפי מחירון {price_list_date}",
@@ -185,7 +176,6 @@ export const LOCALES = {
 
       proposed_changes_title: "שינויים מוצעים",
       proposed_changes_hint: "סמן את השינויים לאישור. הטבלה מציגה את הערך הנוכחי מול הערך החדש.",
-      approve_selected: "בצע את הפעולות שנבחרו",
       applying_actions: "מבצע את הפעולות שנבחרו...",
       will_be_created: "תיווצר",
       risk_low: "סיכון נמוך",
@@ -213,7 +203,6 @@ export const LOCALES = {
       onboarding_step_token: "התחברות למערכת ימות המשיח ויצירת טוקן",
       onboarding_step_api_key: "הזנת מפתח API אישי של ספק ה-AI",
       onboarding_open_login: "התחברות עכשיו",
-      advanced_settings: "הגדרות מתקדמות",
       secrets_note: "הטוקן והמפתחות נשמרים במאגר הסודות של מערכת ההפעלה, לא בקובץ טקסט",
 
       // ----- Approval panel -----
@@ -229,9 +218,9 @@ export const LOCALES = {
       undo_done: "השינוי בוטל",
       undo_failed: "ביטול השינוי נכשל",
       undo_unavailable: "ביטול השינוי אינו זמין בגרסה זו",
-      undo_previous: "ערך קודם",
       undo_previous_params: "ערכים קודמים",
       undo_previous_content: "תוכן קודם של הקובץ",
+      value_label: "ערך",
       value_empty: "(ריק)",
       value_missing: "(לא היה קיים)",
       keychain_write_failed:
@@ -267,7 +256,6 @@ export const LOCALES = {
       tree_unavailable: "תצוגת מבנה הקו אינה זמינה בגרסה זו",
       tree_expand: "פתח",
       tree_collapse: "סגור",
-      tree_root: "הקו",
 
       inspector_title: "פרטי שלוחה",
       inspector_empty: "בחר שלוחה מהעץ כדי לראות את פרטיה",
@@ -314,6 +302,7 @@ export const LOCALES = {
       refine_send: "המשך",
       refine_parent: "משימה בהמשך ל-{previous}",
       refine_unavailable: "המשך משימה אינו זמין בגרסה זו",
+      refine_parent_gone: "לא ניתן להמשיך את המשימה הקודמת. התחל משימה חדשה.",
 
       changelog_title: "יומן שינויים",
       changelog_refresh: "רענן",
@@ -343,7 +332,6 @@ export const LOCALES = {
       knowledge_btn: "📚 Local knowledge base",
       update_available: "🚀 Update available: v{version}",
 
-      settings_title: "⚙️ Target & connection settings",
       target_mode: "Processing mode (target)",
       mode_script: "🌐 Script (GAS)",
       mode_direct: "⚡ Direct AI provider",
@@ -379,9 +367,6 @@ export const LOCALES = {
       hide: "Hide",
       token_placeholder: "Enter system token...",
       check: "Check",
-      api_type_label: "AI key",
-      api_system: "Default system key",
-      api_private: "Personal API key",
       api_key_label: "Personal API key",
       api_key_hint_direct: "Required in direct AI provider mode",
       api_key_hint_script: "Optional — without it the script's configured key is used (required for Pro model)",
@@ -419,7 +404,6 @@ export const LOCALES = {
       preset_human_prompt:
         "Set extension 4 to route to a human operator Sunday to Thursday between 9:00 and 16:00; outside those hours play a message with the opening hours and transfer to leaving a message.",
 
-      processing: "Working on the task…",
       propose_changes: "Propose changes",
       proposing_changes: "Working on the task…",
       preview_title: "📋 Preview of the proposed actions",
@@ -452,14 +436,12 @@ export const LOCALES = {
       mfa_required: "Two-factor authentication (MFA) required",
       comm_error: "Communication error: {error}",
       sending_code: "Sending verification code...",
-      error: "Error: {error}",
       enter_mfa_code: "Please enter the verification code",
       verifying_code: "Verifying code...",
       mfa_success: "Authentication completed successfully!",
       enter_task: "Please describe the task to perform on the line",
       enter_yemot_token: "Please enter a Yemot HaMashiach token",
       sending_to_script: "Sending request to script...",
-      processing_ai: "Processing with the AI model...",
       request_success: "Request completed successfully!",
       request_failed: "An error occurred while executing the request",
       no_actions_selected: "No actions selected",
@@ -479,13 +461,11 @@ export const LOCALES = {
       agent_started_with: "Agent running · {provider} · {model}",
       agent_cancel: "Stop run",
       agent_cancelling: "Cancelling the run...",
-      agent_cancelled: "Run cancelled",
       agent_retry_notice: "The model is busy, retrying ({attempt}/{max})",
       agent_thinking: "Waiting for the model's response...",
       agent_tool_running: "Running...",
       agent_ms: "{ms} ms",
 
-      agent_finish_title: "Task summary",
       run_stats_line:
         "Tokens: {in} in · {out} out · cache {cache}% · {turns} turns · {secs}s",
       run_cost_line: "Estimated cost: ${cost} per the {price_list_date} price list",
@@ -506,7 +486,6 @@ export const LOCALES = {
 
       proposed_changes_title: "Proposed changes",
       proposed_changes_hint: "Mark the changes to approve. The table shows the current value against the new one.",
-      approve_selected: "Run the selected actions",
       applying_actions: "Running the selected actions...",
       will_be_created: "will be created",
       risk_low: "Low risk",
@@ -534,7 +513,6 @@ export const LOCALES = {
       onboarding_step_token: "Sign in to Yemot HaMashiach and create a token",
       onboarding_step_api_key: "Enter your personal AI provider API key",
       onboarding_open_login: "Sign in now",
-      advanced_settings: "Advanced settings",
       secrets_note: "The token and keys are kept in the operating system's credential store, not in a text file",
 
       // ----- Approval panel -----
@@ -550,9 +528,9 @@ export const LOCALES = {
       undo_done: "The change was undone",
       undo_failed: "Undo failed",
       undo_unavailable: "Undo is not available in this version",
-      undo_previous: "Previous value",
       undo_previous_params: "Previous values",
       undo_previous_content: "Previous file contents",
+      value_label: "Value",
       value_empty: "(empty)",
       value_missing: "(did not exist)",
       keychain_write_failed:
@@ -588,7 +566,6 @@ export const LOCALES = {
       tree_unavailable: "The line structure view is not available in this version",
       tree_expand: "Expand",
       tree_collapse: "Collapse",
-      tree_root: "Line",
 
       inspector_title: "Extension details",
       inspector_empty: "Pick an extension from the tree to see its details",
@@ -635,6 +612,8 @@ export const LOCALES = {
       refine_send: "Continue",
       refine_parent: "Task continuing from {previous}",
       refine_unavailable: "Task continuation is not available in this version",
+      refine_parent_gone:
+        "The previous task can no longer be continued. Start a new task.",
 
       changelog_title: "Change log",
       changelog_refresh: "Refresh",

@@ -105,6 +105,27 @@ export function formatTime(ms) {
   return `${hh}:${mm}`;
 }
 
+/**
+ * Change-log timestamp: "HH:MM" for something that happened today, and
+ * "DD/MM HH:MM" for anything older — the log spans runs from earlier days, and
+ * a bare "14:32" there reads as if the change had just been made.
+ * @param {number} ms
+ * @param {Date} [now] injected in tests
+ */
+export function formatLogTime(ms, now = new Date()) {
+  const time = formatTime(ms);
+  if (!time) return "";
+  const d = new Date(ms);
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  if (sameDay) return time;
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mo = String(d.getMonth() + 1).padStart(2, "0");
+  return `${dd}/${mo} ${time}`;
+}
+
 /** Icon per `ExtensionDetail.files[].kind` (contract R1). */
 /** @type {Record<string, string>} */
 export const FILE_KIND_ICON = {
@@ -148,6 +169,11 @@ export function seedPresets(translate) {
 /**
  * Read the stored presets, seeding (and persisting) the defaults on first run.
  * A corrupt or non-array value is replaced rather than crashing the page.
+ *
+ * Ids are de-duplicated on the way out: `PresetBar` keys its `{#each}` by id, so
+ * a stored list that repeats one (hand-edited storage, or a restore-defaults
+ * that landed next to an untouched seeded copy) would otherwise crash the page
+ * with `each_key_duplicate` instead of merely looking odd.
  * @param {(key: string) => string} translate
  * @returns {{id: string, title: string, text: string}[]}
  */
@@ -157,13 +183,19 @@ export function loadPresets(translate) {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
+        const seen = new Set();
         return parsed
           .filter((p) => p && typeof p === "object")
-          .map((p, i) => ({
-            id: String(p.id ?? `p_${i}`),
-            title: String(p.title ?? ""),
-            text: String(p.text ?? "")
-          }));
+          .map((p, i) => {
+            let id = String(p.id ?? `p_${i}`);
+            while (seen.has(id)) id = `${id}_${i}`;
+            seen.add(id);
+            return {
+              id,
+              title: String(p.title ?? ""),
+              text: String(p.text ?? "")
+            };
+          });
       }
     }
   } catch (_) {}
