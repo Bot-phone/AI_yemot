@@ -95,6 +95,9 @@ pub struct RunUsage {
     pub elapsed_ms: u64,
     pub cache_hit_pct: f64,
     pub cost_usd: Option<f64>,
+    /// Month of the public price list `cost_usd` was computed from; `Some`
+    /// exactly when `cost_usd` is `Some` (see `pricing::PRICE_LIST_DATE`).
+    pub price_list_date: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -291,14 +294,26 @@ mod tests {
             elapsed_ms: 7,
             cache_hit_pct: 8.0,
             cost_usd: None,
+            price_list_date: None,
         };
         let v = serde_json::to_value(&u).unwrap();
         for f in [
             "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens",
             "turns", "tool_calls", "elapsed_ms", "cache_hit_pct", "cost_usd",
+            "price_list_date",
         ] {
             assert!(v.get(f).is_some(), "missing usage field {}", f);
         }
         assert!(v["cost_usd"].is_null());
+        // no cost → no price-list date
+        assert!(v["price_list_date"].is_null());
+
+        let priced = RunUsage {
+            cost_usd: Some(0.42),
+            price_list_date: super::super::pricing::price_list_date(Some(0.42)),
+            ..u
+        };
+        let v = serde_json::to_value(&priced).unwrap();
+        assert_eq!(v["price_list_date"], serde_json::json!("2026-09"));
     }
 }

@@ -5,6 +5,7 @@ mod secrets;
 mod updater;
 mod yemot;
 mod yemot_ini;
+mod yemot_inspect;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -26,6 +27,9 @@ pub fn run() {
             yemot::send_mfa_code,
             yemot::validate_mfa_code,
             yemot::logout_yemot,
+            // Read-only line inspection for the editor UI.
+            yemot_inspect::get_extension_tree,
+            yemot_inspect::read_extension,
             ai::send_ai_request,
             agent::runner::start_agent_run,
             agent::runner::cancel_agent_run,
