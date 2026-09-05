@@ -24,6 +24,9 @@ const MAX_FILE_LINES: usize = 40;
 const MAX_TREE_LINES: usize = 60;
 const DEFAULT_MAX_BYTES: usize = 8192;
 const NOTE_UNVERIFIED: &str = "לא ניתן היה לאמת את השינוי (הקריאה החוזרת נכשלה)";
+/// Largest single `UploadFile` body this app sends. The API allows more (50 MB
+/// as of the corpus), but an attachment past this is a mistake, not a message.
+pub const MAX_UPLOAD_BYTES: u64 = 25 * 1024 * 1024;
 
 /// Extensions we refuse to read as text (audio / binary).
 const BINARY_EXTS: &[&str] = &[
@@ -464,6 +467,47 @@ async fn post_json(
         }
     };
 
+    Ok(json)
+}
+
+/// One `multipart/form-data` request, decoded and classified.
+///
+/// `UploadFile` is the only endpoint that is not JSON-in/JSON-out: the corpus
+/// (`מודול API…`, "העלאת קובץ") says *"יש לפנות ב-HTTP POST בפורמט
+/// multipart/form-data"* and that the token may travel in the body, so the token
+/// goes in both the usual `authorization` header and the documented `token`
+/// field. The reply is ordinary JSON and goes through [`classify_response`].
+async fn post_multipart(
+    token: &str,
+    endpoint: &str,
+    form: reqwest::multipart::Form,
+) -> Result<Value, YemotError> {
+    let url = format!("{}{}", YEMOT_API_BASE, endpoint);
+    let res = http()
+        .post(&url)
+        .header("authorization", token)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| YemotError::Network(e.without_url().to_string()))?;
+
+    let status = res.status();
+    let body = res
+        .text()
+        .await
+        .map_err(|e| YemotError::Network(e.without_url().to_string()))?;
+
+    let json: Value = serde_json::from_str(&body).map_err(|_| {
+        if status.as_u16() == 401 || status.as_u16() == 403 {
+            YemotError::Forbidden(format!("HTTP {}", status.as_u16()))
+        } else {
+            YemotError::BadRequest(format!(
+                "תשובה לא תקינה מהשרת (HTTP {})",
+                status.as_u16()
+            ))
+        }
+    })?;
+    classify_response(&json)?;
     Ok(json)
 }
 
@@ -970,6 +1014,75 @@ impl YemotClient {
 
         self.cache.write().await.invalidate(&parent_of_file(&canon));
         Ok(previous)
+    }
+
+    /// Upload one audio file to an extension folder through `UploadFile`.
+    ///
+    /// `convertAudio=1` lets the caller hand over any popular audio format and
+    /// have the system transcode it to telephony `wav`; the corpus is explicit
+    /// that with that flag *the destination path must already carry the `.wav`
+    /// name of the converted file*, which is why a non-`.wav` destination is
+    /// refused here instead of at the server.
+    ///
+    /// Returns the size the server reports for the stored file.
+    pub async fn upload_audio_file(
+        &self,
+        path: &str,
+        bytes: Vec<u8>,
+        file_name: &str,
+    ) -> Result<u64, YemotError> {
+        let canon = canon_file(path)?;
+        if file_extension(&canon) != "wav" {
+            return Err(YemotError::BadRequest(
+                "נתיב היעד להעלאת שמע חייב להסתיים ב-.wav (המערכת ממירה את הקובץ אוטומטית)"
+                    .to_string(),
+            ));
+        }
+        if bytes.is_empty() {
+            return Err(YemotError::BadRequest("הקובץ המצורף ריק".to_string()));
+        }
+        if bytes.len() as u64 > MAX_UPLOAD_BYTES {
+            return Err(YemotError::BadRequest(format!(
+                "הקובץ גדול מדי להעלאה ({} MB לכל היותר)",
+                MAX_UPLOAD_BYTES / (1024 * 1024)
+            )));
+        }
+
+        let sent = bytes.len() as u64;
+        // `qqfile` is the field name the endpoint's own chunked flow uses for
+        // the file part (`qqfile`/`qqfilename`/`qquuid` in the corpus table).
+        let part = reqwest::multipart::Part::bytes(bytes)
+            .file_name(sanitize_upload_name(file_name))
+            .mime_str("application/octet-stream")
+            .map_err(|e| YemotError::BadRequest(e.to_string()))?;
+        let form = reqwest::multipart::Form::new()
+            .text("token", self.token.clone())
+            .text("path", canon.clone())
+            .text("convertAudio", "1")
+            .part("qqfile", part);
+
+        let json = post_multipart(&self.token, "UploadFile", form).await?;
+        self.cache.write().await.invalidate(&parent_of_file(&canon));
+        Ok(json.get("size").and_then(|v| v.as_u64()).unwrap_or(sent))
+    }
+}
+
+/// A filename safe to put in a `Content-Disposition` header: no quotes, no
+/// path separators, no control characters.
+fn sanitize_upload_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| match c {
+            '"' | '\\' | '/' | '\r' | '\n' => '_',
+            c if (c as u32) < 0x20 => '_',
+            c => c,
+        })
+        .collect();
+    let cleaned = cleaned.trim().to_string();
+    if cleaned.is_empty() {
+        "upload".to_string()
+    } else {
+        cleaned
     }
 }
 
@@ -1970,5 +2083,37 @@ mod tests {
             c.upload_text_file("/1/000.mp3", "x").await.unwrap_err(),
             YemotError::BadRequest(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn audio_upload_is_validated_before_any_request() {
+        let c = YemotClient::new("t");
+        // convertAudio=1 requires the destination to be the converted .wav name
+        assert!(matches!(
+            c.upload_audio_file("/1/000.mp3", vec![1, 2, 3], "a.mp3").await.unwrap_err(),
+            YemotError::BadRequest(_)
+        ));
+        assert!(matches!(
+            c.upload_audio_file("/1/000.wav", Vec::new(), "a.mp3").await.unwrap_err(),
+            YemotError::BadRequest(_)
+        ));
+        assert!(matches!(
+            c.upload_audio_file("/1/000.wav", vec![0; MAX_UPLOAD_BYTES as usize + 1], "a.wav")
+                .await
+                .unwrap_err(),
+            YemotError::BadRequest(_)
+        ));
+        assert!(matches!(
+            c.upload_audio_file("/1", vec![1], "a.wav").await.unwrap_err(),
+            YemotError::BadRequest(_)
+        ));
+    }
+
+    #[test]
+    fn upload_names_cannot_break_the_multipart_header() {
+        assert_eq!(sanitize_upload_name("שיר \"טוב\".mp3"), "שיר _טוב_.mp3");
+        assert_eq!(sanitize_upload_name("../../etc/passwd"), ".._.._etc_passwd");
+        assert_eq!(sanitize_upload_name("a\r\nb.wav"), "a__b.wav");
+        assert_eq!(sanitize_upload_name("   "), "upload");
     }
 }
