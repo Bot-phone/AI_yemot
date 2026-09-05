@@ -96,6 +96,12 @@ async fn send_to_script(payload: AIRequestPayload) -> Result<AIResponsePayload, 
         .await
         .map_err(|e| format!("שגיאת קריאת תשובה: {}", e.without_url()))?;
 
+    // The agreed kill-switch signal comes before any status check: the script
+    // answers it with 200, and the UI must show "disabled", not "failed".
+    if let Some(reason) = script_disabled_signal(&text) {
+        return Err(format!("{SCRIPT_DISABLED_PREFIX}{reason}"));
+    }
+
     if status.is_success() {
         Ok(AIResponsePayload {
             success: true,
@@ -106,6 +112,33 @@ async fn send_to_script(payload: AIRequestPayload) -> Result<AIResponsePayload, 
     } else {
         Err(format!("שגיאת שרת סקריפט ({}): {}", status, text))
     }
+}
+
+/// Error prefix the frontend matches to show the dedicated "script disabled"
+/// notice. The text after it is the operator's reason, verbatim.
+pub const SCRIPT_DISABLED_PREFIX: &str = "SCRIPT_DISABLED: ";
+
+/// The agreed signal from `gas/ai_yemot.gs` when its `AI_YEMOT_DISABLED`
+/// Script Property is set: a JSON body with `status: "disabled"` or
+/// `code: "SCRIPT_DISABLED"`. Returns the operator's reason (may be empty).
+/// Anything that is not that exact JSON shape — plain text, an HTML error
+/// page, a normal answer — is `None`, so an ordinary reply can never be
+/// mistaken for the kill switch.
+pub fn script_disabled_signal(body: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(body.trim()).ok()?;
+    let obj = v.as_object()?;
+    let status = obj.get("status").and_then(Value::as_str).unwrap_or("");
+    let code = obj.get("code").and_then(Value::as_str).unwrap_or("");
+    if status != "disabled" && code != "SCRIPT_DISABLED" {
+        return None;
+    }
+    Some(
+        obj.get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string(),
+    )
 }
 
 /// One turn, no tools, the same system prompt the agent uses. Kept so the old
@@ -149,6 +182,21 @@ async fn send_to_direct_ai(payload: AIRequestPayload) -> Result<AIResponsePayloa
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_kill_switch_signal_is_recognised_only_in_its_agreed_shape() {
+        use super::script_disabled_signal as sig;
+        assert_eq!(
+            sig(r#"{"status":"disabled","code":"SCRIPT_DISABLED","message":"תחזוקה עד מחר"}"#),
+            Some("תחזוקה עד מחר".to_string())
+        );
+        assert_eq!(sig(r#"{"code":"SCRIPT_DISABLED"}"#), Some(String::new()));
+        assert_eq!(sig(r#" {"status":"disabled"} "#), Some(String::new()));
+        assert_eq!(sig(r#"{"status":"fatal_error","message":"x"}"#), None);
+        assert_eq!(sig("SCRIPT_DISABLED"), None);
+        assert_eq!(sig("<html>Sorry, unable to open the file</html>"), None);
+        assert_eq!(sig(r#"[{"path":"/1","key":"type","value":"menu"}]"#), None);
+    }
+
     use super::*;
 
     #[test]

@@ -63,8 +63,30 @@ function doPost(e) {
 // פונקציית הטיפול המרכזית בבקשות
 // -------------------------------------------------------------------
 
+// Kill switch. Set the Script Property AI_YEMOT_DISABLED (any value other than
+// "", "0" or "false"; the value itself is shown to the user as the reason) to
+// disable this script without redeploying it. Every request, including admin
+// alerts, then gets the agreed signal below, which the desktop app turns into a
+// dedicated "the script was disabled" notice instead of a generic error.
+function disabledNotice() {
+  const raw = SCRIPT_PROPS.AI_YEMOT_DISABLED;
+  if (raw === undefined || raw === null) return "";
+  const v = String(raw).trim();
+  if (v === "" || v === "0" || v.toLowerCase() === "false") return "";
+  return v;
+}
+
 function handleRequest(params) {
   params = params || {};
+
+  const disabledReason = disabledNotice();
+  if (disabledReason) {
+    return ContentService.createTextOutput(JSON.stringify({
+      status: "disabled",
+      code: "SCRIPT_DISABLED",
+      message: disabledReason
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
 
   // טיפול בהתראות מייל מהוורקר על נושאים חדשים שטרם סווגו
   if (params.action === 'notifyNewTopics' || params.action === 'sendAlert') {

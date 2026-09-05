@@ -50,6 +50,8 @@
   let showApiKey = $state(false);
   let isPreviewMode = $state(true);
   let logoutOnFinish = $state(false);
+  /** Matches `SCRIPT_DISABLED_PREFIX` in src-tauri/src/ai.rs. */
+  const SCRIPT_DISABLED_PREFIX = "SCRIPT_DISABLED: ";
   let scriptUrl = $state("https://script.google.com/macros/s/AKfycbz_REPLACE_ME/exec");
 
   // Known model list per direct provider (first two are the classic Regular/Pro).
@@ -1690,7 +1692,18 @@
         errorMessage = res.message || t("request_failed");
       }
     } catch (e) {
-      errorMessage = t("comm_error", { error: e });
+      const msg = String(e);
+      if (msg.startsWith(SCRIPT_DISABLED_PREFIX)) {
+        // The agreed kill-switch signal from the script: a dedicated notice,
+        // not a generic communication error.
+        const reason = msg.slice(SCRIPT_DISABLED_PREFIX.length).trim();
+        statusMessage = "";
+        errorMessage = reason
+          ? t("script_disabled_reason", { reason })
+          : t("script_disabled");
+      } else {
+        errorMessage = t("comm_error", { error: e });
+      }
     } finally {
       isLoading = false;
       // Logout is performed locally — the token never reaches the script/AI.
