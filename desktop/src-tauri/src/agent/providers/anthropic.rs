@@ -584,8 +584,9 @@ impl Anthropic {
         }
         deltas.flush();
         let aborted = acc.stop.is_none();
+        let had_content = acc.has_content();
         let parsed = acc.finish(aborted);
-        if parsed.content.is_empty() && aborted {
+        if !had_content && aborted {
             // A 200 that yielded no events at all is a gateway that ignored
             // `stream`: fall back to the plain request rather than retrying.
             return Err(ProviderError::BadRequest(

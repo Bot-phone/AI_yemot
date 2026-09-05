@@ -374,6 +374,9 @@ async fn claim_ids(run_id: &str, client: &Arc<YemotClient>, wanted: &[String]) -
             already.insert(id.clone());
         }
     }
+    // The freshly refreshed run is the newest, so a second prune can only
+    // evict older runs and keeps the map at MAX_WRITE_STATES after insertion.
+    prune(&mut map);
     already
 }
 

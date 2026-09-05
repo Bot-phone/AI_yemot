@@ -53,9 +53,9 @@ Executes the selected proposed actions (grouped per extension, one `UpdateExtens
 
 Reverses one already-applied action by writing back the values `approve_actions` recorded as `undo`. Re-reads the server first and refuses (`ok: false`, no write) if the state has moved since the apply — see "Approval and undo lifecycle" below.
 
-### `execute_yemot_actions(token, path, params: {key,value}[]) -> ExtensionUpdateResult` and `read_extension_config(token, path) -> ExtReadDto`
+### `execute_yemot_actions(token, path, params: {key,value}[]) -> ExtensionUpdateResult`
 
-Provided by `yemot.rs` (see that module). Used by the UI for manual edits / diff preview outside a run.
+Provided by `yemot.rs` (see that module). Used only by legacy script mode to apply the parsed action list.
 
 ### Secrets: `secret_set(name, value)`, `secret_get(name) -> Option<String>`, `secret_delete(name)`
 

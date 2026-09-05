@@ -239,6 +239,9 @@ pub fn parse_response(json: &Value, turn: u32) -> ProviderResponse {
 
     if let Some(parts) = json["candidates"][0]["content"]["parts"].as_array() {
         for p in parts {
+            if p.get("thought").and_then(|v| v.as_bool()) == Some(true) {
+                continue;
+            }
             if let Some(t) = p.get("text").and_then(|v| v.as_str()) {
                 if !t.trim().is_empty() {
                     content.push(ContentBlock::Text(t.to_string()));

@@ -692,9 +692,10 @@
         if (p.reset) {
           // The attempt that streamed this block failed; the retry starts over,
           // so drop the partial text instead of appending onto it.
-          const open = agentTimeline[agentTimeline.length - 1];
-          if (open && open.type === "text" && open.streaming) {
-            agentTimeline = agentTimeline.slice(0, -1);
+          // The retry row may already sit after it, so search backwards.
+          const i = agentTimeline.findLastIndex((it) => it.type === "text" && it.streaming);
+          if (i >= 0) {
+            agentTimeline = [...agentTimeline.slice(0, i), ...agentTimeline.slice(i + 1)];
           }
           return;
         }
