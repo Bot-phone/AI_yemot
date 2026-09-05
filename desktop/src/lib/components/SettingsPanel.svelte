@@ -105,6 +105,115 @@
     </div>
 
     <div class="p-5 space-y-5">
+      <!-- AI source: direct provider vs. relay server -->
+      <div>
+        <span id="target-mode-label" class="block text-xs font-semibold text-slate-600 mb-2">
+          {t("target_mode")}
+        </span>
+        <div
+          class="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl"
+          role="group"
+          aria-labelledby="target-mode-label"
+        >
+          <button
+            type="button"
+            onclick={() => onTargetMode("direct")}
+            aria-pressed={targetMode === "direct"}
+            class="py-2 px-3 text-xs font-medium rounded-lg transition {targetMode === 'direct'
+              ? 'bg-white text-blue-700 shadow-sm font-bold'
+              : 'text-slate-600 hover:text-slate-900'}"
+          >
+            {t("mode_direct")}
+          </button>
+          <button
+            type="button"
+            onclick={() => onTargetMode("script")}
+            aria-pressed={targetMode === "script"}
+            class="py-2 px-3 text-xs font-medium rounded-lg transition {targetMode === 'script'
+              ? 'bg-white text-blue-700 shadow-sm font-bold'
+              : 'text-slate-600 hover:text-slate-900'}"
+          >
+            {t("mode_script")}
+          </button>
+        </div>
+        <p class="text-xs text-slate-500 mt-1.5 leading-relaxed">
+          {targetMode === "direct" ? t("mode_direct_hint") : t("mode_script_hint")}
+        </p>
+      </div>
+
+      {#if targetMode === "script"}
+        <div class="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2 text-xs text-slate-700">
+          <p class="font-semibold text-slate-800">{t("relay_sent_title")}</p>
+          <ul class="list-disc ps-5 space-y-0.5">
+            <li>{t("relay_sent_task")}</li>
+            <li>{t("relay_sent_model")}</li>
+            <li>{t("relay_sent_preview")}</li>
+            <li>{t("relay_sent_key")}</li>
+          </ul>
+          <p class="font-semibold text-slate-800 pt-1">{t("relay_not_sent_title")}</p>
+          <ul class="list-disc ps-5 space-y-0.5">
+            <li>{t("relay_not_sent_token")}</li>
+            <li>{t("relay_not_sent_line")}</li>
+          </ul>
+        </div>
+
+        <div
+          role="note"
+          class="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 leading-relaxed"
+        >
+          <span class="font-bold">⚠️ {t("relay_key_warning_title")}</span>
+          {t("relay_key_warning")}
+        </div>
+
+        <div>
+          <span id="model-type-label" class="block text-xs font-semibold text-slate-600 mb-1.5">
+            {t("model_label")}
+          </span>
+          <div class="space-y-1.5" role="radiogroup" aria-labelledby="model-type-label">
+            <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+              <input
+                type="radio"
+                bind:group={modelType}
+                value="regular"
+                class="text-blue-600 focus:ring-blue-500"
+              />
+              <span>{t("model_regular")}</span>
+            </label>
+            <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+              <input
+                type="radio"
+                bind:group={modelType}
+                value="pro"
+                class="text-blue-600 focus:ring-blue-500"
+              />
+              <span>{t("model_pro")}</span>
+            </label>
+          </div>
+        </div>
+
+        <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+          <input
+            type="checkbox"
+            bind:checked={isPreviewMode}
+            class="rounded text-blue-600 focus:ring-blue-500"
+          />
+          <span class="font-medium">{t("preview_mode")}</span>
+        </label>
+
+        <div>
+          <label for="script-url-input" class="block text-xs font-semibold text-slate-600 mb-1">
+            {t("script_url_label")}
+          </label>
+          <input
+            id="script-url-input"
+            type="text"
+            dir="ltr"
+            bind:value={scriptUrl}
+            class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none text-slate-600"
+          />
+        </div>
+      {/if}
+
       <!-- Provider (direct mode) -->
       {#if targetMode === "direct"}
         <div>
@@ -347,99 +456,6 @@
         <span>{t("logout_on_finish")}</span>
       </label>
 
-      <!-- Legacy GAS script mode, demoted -->
-      <details class="border-t pt-4 group" open={targetMode === "script"}>
-        <summary
-          class="text-xs font-semibold text-slate-600 cursor-pointer select-none list-none flex items-center gap-1.5"
-        >
-          <span class="transition group-open:rotate-90 inline-block">▸</span>
-          <span>{t("legacy_section")}</span>
-        </summary>
-
-        <div class="space-y-4 pt-3">
-          <p class="text-xs text-slate-500 leading-relaxed">{t("legacy_section_hint")}</p>
-
-          <div>
-            <span id="target-mode-label" class="block text-xs font-semibold text-slate-600 mb-2">
-              {t("target_mode")}
-            </span>
-            <div
-              class="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl"
-              role="group"
-              aria-labelledby="target-mode-label"
-            >
-              <button
-                type="button"
-                onclick={() => onTargetMode("direct")}
-                class="py-1.5 px-3 text-xs font-medium rounded-lg transition {targetMode === 'direct'
-                  ? 'bg-white text-blue-700 shadow-sm font-bold'
-                  : 'text-slate-600 hover:text-slate-900'}"
-              >
-                {t("mode_direct")}
-              </button>
-              <button
-                type="button"
-                onclick={() => onTargetMode("script")}
-                class="py-1.5 px-3 text-xs font-medium rounded-lg transition {targetMode === 'script'
-                  ? 'bg-white text-blue-700 shadow-sm font-bold'
-                  : 'text-slate-600 hover:text-slate-900'}"
-              >
-                {t("mode_script")}
-              </button>
-            </div>
-          </div>
-
-          {#if targetMode === "script"}
-            <div>
-              <span id="model-type-label" class="block text-xs font-semibold text-slate-600 mb-1.5">
-                {t("model_label")}
-              </span>
-              <div class="space-y-1.5" role="radiogroup" aria-labelledby="model-type-label">
-                <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                  <input
-                    type="radio"
-                    bind:group={modelType}
-                    value="regular"
-                    class="text-blue-600 focus:ring-blue-500"
-                  />
-                  <span>{t("model_regular")}</span>
-                </label>
-                <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                  <input
-                    type="radio"
-                    bind:group={modelType}
-                    value="pro"
-                    class="text-blue-600 focus:ring-blue-500"
-                  />
-                  <span>{t("model_pro")}</span>
-                </label>
-              </div>
-            </div>
-
-            <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-              <input
-                type="checkbox"
-                bind:checked={isPreviewMode}
-                class="rounded text-blue-600 focus:ring-blue-500"
-              />
-              <span class="font-medium">{t("preview_mode")}</span>
-            </label>
-
-            <div>
-              <label for="script-url-input" class="block text-xs font-semibold text-slate-600 mb-1">
-                {t("script_url_label")}
-              </label>
-              <input
-                id="script-url-input"
-                type="text"
-                dir="ltr"
-                bind:value={scriptUrl}
-                class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none text-slate-600"
-              />
-            </div>
-          {/if}
-        </div>
-      </details>
     </div>
   </div>
 </div>
