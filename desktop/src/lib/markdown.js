@@ -61,8 +61,17 @@ export function escapeHtml(value) {
 
 // Technical tokens (ivr2 paths, /1/2 paths, file names, key=value) must stay LTR
 // even inside a right-to-left sentence — wrap each one in <bdi dir="ltr">.
+//
+// The bare `/1/2` alternative needs boundaries on both sides, or it eats a slice
+// out of the middle of ordinary text and splits it into separate bidi runs:
+//   "24/7"            → the left lookbehind (a preceding \w) stops it
+//   "05/09/2026"      → same: "05" precedes the first slash
+//   "a.co/1/2"        → the preceding "." / ":" / "/" stops it
+//   "/3/1x"           → the right lookahead stops it; `/` is in the lookahead
+//                       too, so it cannot backtrack down to a bare "/3" either
+//   "בשלוחה /3/1 יש"  → still matched, which is the whole point
 export const TECHNICAL_TOKEN_RE =
-  /(ivr2:\/[^\s,;]*|\/\d+(?:\/\d+)*|[A-Za-z0-9_.-]+\.(?:wav|txt|ini|mp3|json)|[A-Za-z_][A-Za-z0-9_]{1,}=[^\s,;]+)/g;
+  /(ivr2:\/[^\s,;]*|(?<![\w./:])\/\d+(?:\/\d+)*(?![\w/])|[A-Za-z0-9_.-]+\.(?:wav|txt|ini|mp3|json)|[A-Za-z_][A-Za-z0-9_]{1,}=[^\s,;]+)/g;
 
 /**
  * Escape a technical string and isolate its LTR tokens for RTL layouts.
@@ -130,7 +139,9 @@ function enhanceAgentHtml(html) {
   }
   for (const node of textNodes) {
     const parent = node.parentElement;
-    if (!parent || parent.closest("code, pre, bdi")) continue;
+    // `a` too: a link's text is already an isolated, LTR-ish unit and slicing it
+    // into <bdi> runs breaks both its rendering and the click target.
+    if (!parent || parent.closest("code, pre, bdi, a")) continue;
     const text = node.nodeValue ?? "";
     const matches = [...text.matchAll(TECHNICAL_TOKEN_RE)];
     if (matches.length === 0) continue;

@@ -34,8 +34,24 @@
     /** @type {(el: HTMLElement | null) => void} */
     onTimelineElement,
     /** @type {() => void} */
-    onTimelineScroll
+    onTimelineScroll,
+    /**
+     * Link interception for the rendered agent markdown — without it a link in
+     * the model's answer navigates the webview itself away from the app.
+     * @type {((e: MouseEvent) => void) | undefined}
+     */
+    onLinkClick = undefined
   } = $props();
+
+  /**
+   * Both handlers have to run on every click: one owns the copy buttons, the
+   * other owns the links.
+   * @param {MouseEvent} e
+   */
+  function handleTimelineClick(e) {
+    void handleCopyPreClick(e);
+    onLinkClick?.(e);
+  }
 
   /** @type {HTMLElement | null} */
   let timelineRef = $state(null);
@@ -80,7 +96,7 @@
   <div
     bind:this={timelineRef}
     onscroll={onTimelineScroll}
-    onclick={handleCopyPreClick}
+    onclick={handleTimelineClick}
     class="space-y-2 max-h-[28rem] overflow-y-auto"
   >
     {#each timeline as item, idx (idx)}

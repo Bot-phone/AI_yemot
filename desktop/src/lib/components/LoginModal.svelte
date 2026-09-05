@@ -33,14 +33,67 @@
     /** @type {(id: string) => void} */
     onMethodChange
   } = $props();
+
+  /** @type {HTMLElement | null} */
+  let dialogRef = $state(null);
+
+  /** Focusable controls inside the dialog, in DOM order. */
+  function focusables() {
+    if (!dialogRef) return /** @type {HTMLElement[]} */ ([]);
+    return /** @type {HTMLElement[]} */ (
+      Array.from(
+        dialogRef.querySelectorAll(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+      )
+    );
+  }
+
+  // The credentials step autofocuses its own first input. The MFA step is
+  // reached directly from `checkToken` too, where nothing in the dialog would
+  // otherwise hold focus at all — so move focus to its first real control.
+  $effect(() => {
+    if (step !== "mfa" || !dialogRef) return;
+    const first = focusables().find(
+      (el) => el.id === "login-mfa-method" || el.id === "login-mfa-code"
+    );
+    (first ?? focusables()[0])?.focus();
+  });
+
+  /**
+   * Minimal focus trap: Tab / Shift+Tab wrap around inside the dialog instead of
+   * walking off into the page behind the overlay.
+   * @param {KeyboardEvent} e
+   */
+  function handleKeydown(e) {
+    if (e.key !== "Tab") return;
+    const items = focusables();
+    if (items.length === 0) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    const active = /** @type {HTMLElement | null} */ (document.activeElement);
+    if (e.shiftKey) {
+      if (active === first || !dialogRef?.contains(active)) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else if (active === last || !dialogRef?.contains(active)) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
 </script>
 
 <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
+    bind:this={dialogRef}
+    onkeydown={handleKeydown}
     class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4"
     role="dialog"
     aria-modal="true"
     aria-labelledby="login-modal-title"
+    tabindex="-1"
   >
     <div class="flex items-center justify-between border-b pb-3">
       <h3 id="login-modal-title" class="font-bold text-sm text-slate-800 flex items-center gap-2">

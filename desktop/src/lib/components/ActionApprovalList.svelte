@@ -14,6 +14,8 @@
     results = {},
     /** @type {Record<string, string>} */
     undoState = {},
+    /** @type {Record<string, string>} */
+    undoMessages = {},
     selectedCount = 0,
     /** @type {{settings: number, paths: number, overwrites: number}} */
     riskSummary = { settings: 0, paths: 0, overwrites: 0 },
@@ -32,8 +34,36 @@
     /** @type {() => void} */
     onCancelConfirm,
     /** @type {(actionId: string) => void} */
-    onUndo
+    onUndo,
+    /**
+     * A single checkbox changed. The armed risky-change confirmation describes a
+     * selection that no longer exists, so the page disarms it.
+     * @type {(() => void) | undefined}
+     */
+    onToggleAction = undefined
   } = $props();
+
+  /**
+   * `res.undo` is an UndoRecord (src-tauri/src/agent/runner.rs): `{ action_id,
+   * kind, path, params: [key, previousValue | null][], contents: string | null }`.
+   * Rendering it straight into the markup gives "[object Object]", so pull the
+   * two shapes it can carry apart and ignore anything unrecognised.
+   * @param {any} undo
+   */
+  function undoParams(undo) {
+    const rows = undo && Array.isArray(undo.params) ? undo.params : [];
+    return rows
+      .filter((/** @type {any} */ r) => Array.isArray(r) && r.length >= 1)
+      .map((/** @type {any} */ r) => ({
+        key: String(r[0]),
+        value: r[1] == null ? t("value_missing") : r[1] === "" ? t("value_empty") : String(r[1])
+      }));
+  }
+
+  /** @param {any} undo */
+  function undoContents(undo) {
+    return undo && typeof undo.contents === "string" ? undo.contents : "";
+  }
 </script>
 
 <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
@@ -112,6 +142,7 @@
           <input
             type="checkbox"
             bind:checked={action.selected}
+            onchange={() => onToggleAction?.()}
             disabled={applied}
             aria-label={action.path}
             class="mt-1 rounded text-blue-600 focus:ring-blue-500 disabled:opacity-50"
@@ -175,10 +206,11 @@
 
             {#if action.expanded}
               {#if action.previous}
-                <div class="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
-                  <span class="font-bold">{t("undo_previous")}:</span>
-                  <span class="font-mono break-all"><bdi dir="ltr">{action.previous}</bdi></span>
-                </div>
+                <!-- The full previous file content: long, so keep it collapsed. -->
+                <details class="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
+                  <summary class="cursor-pointer font-bold">{t("undo_previous_content")}</summary>
+                  <pre class="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md bg-white p-2 font-mono text-xs" dir="ltr">{action.previous}</pre>
+                </details>
               {/if}
               {#if action.diff.length === 0}
                 <p class="text-xs text-slate-500">{t("no_diff")}</p>
@@ -260,17 +292,47 @@
                   </ul>
                 {/if}
                 {#if res.undo}
-                  <div class="mt-1 text-slate-700">
-                    <span class="font-bold">{t("undo_previous")}:</span>
-                    <span class="font-mono break-all"><bdi dir="ltr">{res.undo}</bdi></span>
-                  </div>
+                  {@const prevParams = undoParams(res.undo)}
+                  {@const prevContents = undoContents(res.undo)}
+                  {#if prevParams.length > 0}
+                    <div class="mt-1 text-slate-700">
+                      <span class="font-bold">{t("undo_previous_params")}:</span>
+                      <ul class="mt-0.5 space-y-0.5">
+                        {#each prevParams as p}
+                          <li class="font-mono break-all">
+                            <bdi dir="ltr">{p.key}</bdi>: <bdi dir="ltr">{p.value}</bdi>
+                          </li>
+                        {/each}
+                      </ul>
+                    </div>
+                  {:else if prevContents}
+                    <details class="mt-1 text-slate-700">
+                      <summary class="cursor-pointer font-bold">{t("undo_previous_content")}</summary>
+                      <pre class="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md bg-white/60 p-2 font-mono text-xs" dir="ltr">{prevContents}</pre>
+                    </details>
+                  {/if}
                 {/if}
                 {#if res.ok}
                   <div class="mt-1.5 flex items-center gap-2 flex-wrap">
                     {#if undoState[action.id] === "done"}
                       <span class="font-semibold text-slate-700">↩ {t("undo_done")}</span>
+                      {#if undoMessages[action.id]}
+                        <span class="text-slate-600">— {undoMessages[action.id]}</span>
+                      {/if}
                     {:else if undoState[action.id] === "unavailable"}
                       <span class="text-slate-600">{t("undo_unavailable")}</span>
+                    {:else if undoState[action.id] === "failed"}
+                      <span class="font-semibold text-rose-700">✗ {t("undo_failed")}</span>
+                      {#if undoMessages[action.id]}
+                        <span class="text-rose-700">— {undoMessages[action.id]}</span>
+                      {/if}
+                      <button
+                        type="button"
+                        onclick={() => onUndo(action.id)}
+                        class="px-2 py-0.5 rounded-md border border-slate-300 bg-white text-slate-700 text-xs font-medium hover:bg-slate-100 transition"
+                      >
+                        ↩ {t("undo_action")}
+                      </button>
                     {:else}
                       <button
                         type="button"

@@ -157,9 +157,12 @@
   let scriptPreviewNotice = $state("");
   /** The risky-change confirmation step is armed and waiting for a click. */
   let confirmRisky = $state(false);
-  /** action_id -> "" | "done" | "unavailable" for the per-action undo button. */
+  /** action_id -> "" | "done" | "failed" | "unavailable" for the undo button. */
   /** @type {Record<string, string>} */
   let undoState = $state({});
+  /** action_id -> message returned by the last undo attempt. */
+  /** @type {Record<string, string>} */
+  let undoMessages = $state({});
 
   // ----- Run-feedback state -----
   /** Prompt of the last submitted run, so "נסה שוב" can repeat it. */
@@ -273,12 +276,15 @@
   /**
    * @param {string} name
    * @param {string} value
+   * @returns {Promise<boolean>} true when the keychain actually took the value.
    */
   async function secretSet(name, value) {
     try {
       await invoke("secret_set", { name, value });
+      return true;
     } catch (e) {
       console.error("secret_set failed:", name, e);
+      return false;
     }
   }
 
@@ -296,30 +302,54 @@
    * values written by earlier versions on the way (and deleting them there).
    */
   async function loadSecrets() {
+    // A failed keychain write must never cost the user their credentials: the
+    // localStorage copy is deleted only once the secret is safely stored, and
+    // the value stays in memory for this session either way.
+    let migrationFailed = false;
+    let fallbackToken = "";
+    let fallbackKey = "";
+    let fallbackUrl = "";
     try {
       const legacyToken = localStorage.getItem("ai_yemot_token");
       if (legacyToken) {
-        await secretSet("yemot_token", legacyToken);
-        localStorage.removeItem("ai_yemot_token");
+        if (await secretSet("yemot_token", legacyToken)) {
+          localStorage.removeItem("ai_yemot_token");
+        } else {
+          migrationFailed = true;
+          fallbackToken = legacyToken;
+        }
       }
       const legacyKey = localStorage.getItem("ai_yemot_api_key");
       if (legacyKey) {
         // The old build kept a single key with no provider attached — it belongs
         // to whichever provider was selected when it was saved.
-        await secretSet(`api_key_${aiProvider}`, legacyKey);
-        localStorage.removeItem("ai_yemot_api_key");
+        if (await secretSet(`api_key_${aiProvider}`, legacyKey)) {
+          localStorage.removeItem("ai_yemot_api_key");
+        } else {
+          migrationFailed = true;
+          fallbackKey = legacyKey;
+        }
       }
       const legacyUrl = localStorage.getItem("ai_yemot_custom_base_url");
       if (legacyUrl) {
-        await secretSet("custom_base_url", legacyUrl);
-        localStorage.removeItem("ai_yemot_custom_base_url");
+        if (await secretSet("custom_base_url", legacyUrl)) {
+          localStorage.removeItem("ai_yemot_custom_base_url");
+        } else {
+          migrationFailed = true;
+          fallbackUrl = legacyUrl;
+        }
       }
     } catch (_) {}
 
-    yemotToken = await secretGet("yemot_token");
-    customBaseUrl = await secretGet("custom_base_url");
+    yemotToken = (await secretGet("yemot_token")) || fallbackToken;
+    customBaseUrl = (await secretGet("custom_base_url")) || fallbackUrl;
     for (const p of PROVIDER_NAMES) {
       apiKeys[p] = await secretGet(`api_key_${p}`);
+    }
+    if (fallbackKey && !apiKeys[aiProvider]) apiKeys[aiProvider] = fallbackKey;
+
+    if (migrationFailed) {
+      errorMessage = t("keychain_write_failed");
     }
   }
 
@@ -398,6 +428,13 @@
 
   function handleProviderChange() {
     normalizeModelSelection();
+    // Persist right away: `saveSettings` only runs on submit, so a provider the
+    // user picked and never submitted was lost on restart.
+    try {
+      localStorage.setItem("ai_yemot_provider", aiProvider);
+      localStorage.setItem("ai_yemot_model_source", modelSource);
+      localStorage.setItem("ai_yemot_selected_model", selectedModel);
+    } catch (_) {}
   }
 
   async function checkToken() {
@@ -537,6 +574,7 @@
     approvalNotice = "";
     confirmRisky = false;
     undoState = {};
+    undoMessages = {};
     timelineAtBottom = true;
     runId = null;
     agentRunning = false;
@@ -778,8 +816,8 @@
           // The Yemot session died mid-run: re-authenticate, then re-run
           // automatically once the new token is in place.
           errorMessage = t("agent_session_expired");
+          openLoginModal(true);
           pendingRerun = true;
-          openLoginModal();
           loginError = t("agent_session_expired");
         } else {
           errorMessage = p.message || t("request_failed");
@@ -787,7 +825,10 @@
       })
     );
 
-    agentUnlisteners = await Promise.all(subs);
+    // Append rather than assign: `listen()` resolves after several ticks, and an
+    // assignment here would drop (and leak) any subscription registered in the
+    // meantime instead of letting `teardownAgentListeners` reach it.
+    agentUnlisteners = [...agentUnlisteners, ...(await Promise.all(subs))];
   }
 
   /**
@@ -912,9 +953,19 @@
     confirmRisky = false;
   }
 
+  /**
+   * Any change to the individual selection invalidates the armed confirmation
+   * (and the risk summary it quotes, which re-derives from the selection).
+   */
+  function handleActionToggled() {
+    confirmRisky = false;
+    approvalNotice = "";
+  }
+
   function clearAllActions() {
     for (const a of proposedActions) a.selected = false;
     proposedActions = [...proposedActions];
+    approvalNotice = "";
     confirmRisky = false;
   }
 
@@ -926,7 +977,7 @@
       return;
     }
     if (!runId) {
-      errorMessage = t("no_run_id");
+      approvalNotice = t("no_run_id");
       return;
     }
     // Risky changes get one explicit confirmation click before anything runs.
@@ -955,7 +1006,7 @@
       const done = list.filter((r) => r && r.ok).length;
       statusMessage = t("actions_done", { done, total: selected.length });
     } catch (e) {
-      errorMessage = t("comm_error", { error: e });
+      approvalNotice = t("comm_error", { error: e });
       statusMessage = "";
     } finally {
       isLoading = false;
@@ -974,11 +1025,17 @@
   async function undoAction(actionId) {
     if (!runId) return;
     try {
-      await invoke("undo_action", { runId, actionId });
-      undoState = { ...undoState, [actionId]: "done" };
+      const r = /** @type {any} */ (await invoke("undo_action", { runId, actionId }));
+      undoState = { ...undoState, [actionId]: r?.ok ? "done" : "failed" };
+      undoMessages = { ...undoMessages, [actionId]: r?.message ?? "" };
     } catch (e) {
       console.error("undo_action failed:", e);
-      undoState = { ...undoState, [actionId]: "unavailable" };
+      // Only a missing command means "undo is unavailable in this build"; every
+      // other rejection is a real failure and its text has to reach the user.
+      const text = e instanceof Error ? e.message : String(e ?? "");
+      const missing = /not (found|allowed)|unknown command|command .* not/i.test(text);
+      undoState = { ...undoState, [actionId]: missing ? "unavailable" : "failed" };
+      undoMessages = { ...undoMessages, [actionId]: missing ? "" : text };
     }
   }
 
@@ -988,9 +1045,26 @@
     if (searchDebounce !== null) clearTimeout(searchDebounce);
   });
 
-  /** @param {SubmitEvent} [event] */
+  /**
+   * Submit entry point. `isLoading` is raised here — before any `await` — so a
+   * second click cannot slip through while `saveSettings` / `setupAgentListeners`
+   * are still running and start a second (ghost) run with orphaned listeners.
+   * @param {SubmitEvent} [event]
+   */
   async function handleSubmit(event) {
     event?.preventDefault();
+    if (isLoading) return;
+    isLoading = true;
+    try {
+      await runSubmitFlow();
+    } finally {
+      // A direct-mode run that is actually under way keeps the spinner up until
+      // `agent:finished` / `agent:error` clears it; every other path ends here.
+      if (!agentRunning && !agentStarting) isLoading = false;
+    }
+  }
+
+  async function runSubmitFlow() {
     if (!promptText.trim()) {
       errorMessage = t("enter_prompt");
       return;
@@ -1273,6 +1347,35 @@
     }
   }
 
+  /**
+   * Link interception for the agent markdown. The webview must never navigate
+   * itself: external links are handed to the OS browser, and everything else is
+   * simply inert (agent output is model-generated and not a trusted navigation
+   * source). Same rules as `handleContentClick`, minus the knowledge-file jumps.
+   * @param {MouseEvent} e
+   */
+  async function handleAgentContentClick(e) {
+    const anchor = /** @type {HTMLElement} */ (e.target).closest("a");
+    if (!anchor) return;
+
+    e.preventDefault();
+
+    const href = anchor.getAttribute("href");
+    if (!href) return;
+    if (
+      href.startsWith("http://") ||
+      href.startsWith("https://") ||
+      href.startsWith("mailto:")
+    ) {
+      try {
+        await openUrl(href);
+      } catch (err) {
+        console.error("Failed to open URL with plugin-opener:", err);
+        window.open(href, "_blank");
+      }
+    }
+  }
+
   /** @param {MouseEvent} e */
   async function handleContentClick(e) {
     const anchor = /** @type {HTMLElement} */ (e.target).closest("a");
@@ -1434,7 +1537,14 @@
 
   // ----- Login (create token) flow: system number + password + MFA -----
 
-  function openLoginModal() {
+  /**
+   * @param {boolean} [keepPendingRerun] true only for the `session_expired`
+   *   path, which opens the modal precisely in order to re-run afterwards.
+   */
+  function openLoginModal(keepPendingRerun = false) {
+    // Otherwise a stale flag from an earlier expired run would make an unrelated
+    // login silently fire off the previous prompt again.
+    if (!keepPendingRerun) pendingRerun = false;
     rememberOpener();
     loginUsername = "";
     loginPassword = "";
@@ -1452,6 +1562,8 @@
   }
 
   function closeLoginModal() {
+    // Closing the modal cancels the automatic re-run of an expired session.
+    pendingRerun = false;
     showLoginModal = false;
     restoreOpenerFocus();
   }
@@ -1481,10 +1593,11 @@
     yemotToken = token;
     await secretSet("yemot_token", token.trim());
     tokenStatus = { valid: true, message: t("login_success") };
+    // Read the flag before closing — `closeLoginModal` clears it.
+    const rerun = pendingRerun;
     closeLoginModal();
     // A run that died on `session_expired` picks up again by itself.
-    if (pendingRerun) {
-      pendingRerun = false;
+    if (rerun) {
       await handleSubmit();
     }
   }
@@ -1674,7 +1787,7 @@
             {#if !yemotToken.trim()}
               <button
                 type="button"
-                onclick={openLoginModal}
+                onclick={() => openLoginModal()}
                 class="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition"
               >
                 {t("onboarding_open_login")}
@@ -1805,7 +1918,7 @@
               <div class="flex items-center gap-2">
                 <button
                   type="button"
-                  onclick={openLoginModal}
+                  onclick={() => openLoginModal()}
                   class="text-xs text-blue-600 hover:underline"
                 >
                   {t("get_token")}
@@ -2090,6 +2203,7 @@
             onRetry={retryRun}
             onTimelineElement={(/** @type {HTMLElement | null} */ el) => (timelineRef = el)}
             onTimelineScroll={handleTimelineScroll}
+            onLinkClick={handleAgentContentClick}
           />
         {/if}
 
@@ -2099,6 +2213,7 @@
             actions={proposedActions}
             results={actionResults}
             {undoState}
+            {undoMessages}
             selectedCount={selectedActionCount}
             {riskSummary}
             {confirmRisky}
@@ -2110,6 +2225,7 @@
             onClearAll={clearAllActions}
             onApprove={approveSelectedActions}
             onCancelConfirm={() => (confirmRisky = false)}
+            onToggleAction={handleActionToggled}
             onUndo={undoAction}
           />
         {/if}

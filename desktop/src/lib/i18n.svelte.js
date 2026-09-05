@@ -219,8 +219,15 @@ export const LOCALES = {
       action_already_applied: "בוצע",
       undo_action: "בטל שינוי",
       undo_done: "השינוי בוטל",
+      undo_failed: "ביטול השינוי נכשל",
       undo_unavailable: "ביטול השינוי אינו זמין בגרסה זו",
       undo_previous: "ערך קודם",
+      undo_previous_params: "ערכים קודמים",
+      undo_previous_content: "תוכן קודם של הקובץ",
+      value_empty: "(ריק)",
+      value_missing: "(לא היה קיים)",
+      keychain_write_failed:
+        "לא ניתן לשמור את הסודות במחסן המפתחות של מערכת ההפעלה. הערכים נשמרים לשימוש בהפעלה הנוכחית בלבד ונשארים בינתיים באחסון המקומי.",
 
       // ----- Run feedback -----
       agent_elapsed: "{secs} שנ׳",
@@ -445,8 +452,15 @@ export const LOCALES = {
       action_already_applied: "Applied",
       undo_action: "Undo change",
       undo_done: "The change was undone",
+      undo_failed: "Undo failed",
       undo_unavailable: "Undo is not available in this version",
       undo_previous: "Previous value",
+      undo_previous_params: "Previous values",
+      undo_previous_content: "Previous file contents",
+      value_empty: "(empty)",
+      value_missing: "(did not exist)",
+      keychain_write_failed:
+        "The secrets could not be stored in the OS keychain. They are kept for this session only and stay in local storage for now.",
 
       // ----- Run feedback -----
       agent_elapsed: "{secs}s",
