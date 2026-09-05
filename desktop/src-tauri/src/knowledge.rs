@@ -11,14 +11,15 @@
 pub mod knowledge_text;
 
 use include_dir::{include_dir, Dir};
-use knowledge_text::{expand_clitics, normalize, tokenize};
+use knowledge_text::{normalize, term_variants, tokenize, TOK_DIV};
 pub use knowledge_text::estimate_tokens;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
-// הטמעת כל תיקיית התיעוד והידע בתוך קובץ ה-Binary בזמן הקומפילציה
-static KNOWLEDGE_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/knowledge");
+// הטמעת כל תיקיית התיעוד והידע בתוך קובץ ה-Binary בזמן הקומפילציה.
+// מקור יחיד: `knowledge/` בשורש המאגר (אין עותק תחת src-tauri).
+static KNOWLEDGE_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../knowledge");
 
 /// האינדקס הבינארי שנבנה ב-build.rs
 static INDEX_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/knowledge_index.bin"));
@@ -77,11 +78,33 @@ const BM25_K1: f64 = 2.5;
 const BM25_B: f64 = 0.75;
 const HEADING_BOOST: f64 = 3.0;
 /// שם הקובץ הוא נושא המסמך במאגר הזה — התאמה אליו היא אות טופיקלי חזק.
-const TITLE_BOOST: f64 = 3.0;
+const TITLE_BOOST: f64 = 2.0;
+/// תקרה לחיזוק הכולל. החיזוקים מצטברים **חיבורית** ולא כפלית: קודם כותרת
+/// ושם-קובץ הכפילו ×3 כל אחד = ×9, ואיפשרו לקובץ ענק ששמו מכיל מילה נפוצה
+/// להשתלט על כל התוצאות.
+const MAX_BOOST: f64 = 4.0;
 /// אורך מסמך מינימלי אפקטיבי — מונע העדפה מנופחת של נתחים זעירים.
 const MIN_DOC_LEN: f64 = 40.0;
 /// מונח שמופיע ביותר מ-20% מהנתחים נחשב מילת-רקע ומסונן מהשאילתה.
 const STOPWORD_DF_RATIO: f64 = 0.20;
+/// עוצמת נרמול גודל הקובץ (0 = ללא, 1 = ליניארי הפוך).
+const FILE_LEN_NORM: f64 = 0.25;
+/// לכל היותר 2 נתחים מאותו קובץ בחמשת הראשונים.
+const MAX_PER_FILE_TOP: usize = 2;
+const DIVERSITY_WINDOW: usize = 5;
+/// מונחים שמופיעים כמעט בכל בלוק ini — אסור שיפעילו force-merge.
+const UBIQUITOUS_KEYS: &[&str] = &["type", "title", "path"];
+/// רשימת param_index ארוכה מזה אינה סימן ממוקד ולכן אינה מאלצת מיזוג.
+const MAX_FORCED_PARAM_CHUNKS: usize = 8;
+/// טבלת קודי ההודעות — 10.7% מהקורפוס, 55 נתחים בעלי אותה כותרת.
+/// מוחרגת מדירוג BM25 (עדיין נגישה דרך `get_knowledge_section` ולפי קוד M####).
+const MESSAGES_FILE: &str = "רשימת הודעות מערכת.txt";
+/// תקציב טוקנים לקטע (snippet) בתוצאת חיפוש רגילה.
+const SNIPPET_TOKENS: usize = 150;
+/// יחס בין המקום הראשון לשני שמעליו מחזירים את הסעיף המלא.
+const DOMINANT_RATIO: f64 = 1.8;
+/// תקרה לגוף מלא של תוצאה דומיננטית.
+const DOMINANT_BODY_TOKENS: usize = 2000;
 
 // ---------------------------------------------------------------------------
 // טעינת האינדקס
@@ -101,6 +124,8 @@ struct Chunk {
     end: u32,
     heading: String,
     part: u16,
+    /// חלק מפורמט האינדקס; נקרא בבדיקות ובכלי אבחון בלבד.
+    #[allow(dead_code)]
     nparts: u16,
     doc_len: u32,
 }
@@ -115,6 +140,11 @@ struct Index {
     type_index: HashMap<String, Vec<u32>>,
     param_index: HashMap<String, Vec<u32>>,
     avgdl: f64,
+    /// מספר הנתחים בכל קובץ + הממוצע, לנרמול גודל קובץ בדירוג.
+    file_chunks: Vec<u32>,
+    avg_file_chunks: f64,
+    /// אינדקס הקובץ של טבלת קודי ההודעות, אם קיים.
+    messages_file: Option<u32>,
 }
 
 static INDEX: OnceLock<Index> = OnceLock::new();
@@ -235,14 +265,27 @@ fn index() -> &'static Index {
             (total_len as f64 / nc as f64).max(1.0)
         };
 
-        let file_tokens = files
+        // גם טוקני שם הקובץ מורחבים (אותיות שימוש + גזע), בדיוק כמו בבנייה.
+        let file_tokens: Vec<HashSet<String>> = files
             .iter()
             .map(|f| {
                 tokenize(&normalize(f.strip_suffix(".txt").unwrap_or(f)))
-                    .into_iter()
+                    .iter()
+                    .flat_map(|t| term_variants(t))
                     .collect()
             })
             .collect();
+
+        let mut file_chunks = vec![0u32; files.len()];
+        for ch in &chunks {
+            file_chunks[ch.file as usize] += 1;
+        }
+        let avg_file_chunks = if files.is_empty() {
+            1.0
+        } else {
+            (chunks.len() as f64 / files.len() as f64).max(1.0)
+        };
+        let messages_file = files.iter().position(|f| f == MESSAGES_FILE).map(|i| i as u32);
 
         Index {
             files,
@@ -252,6 +295,9 @@ fn index() -> &'static Index {
             type_index,
             param_index,
             avgdl,
+            file_chunks,
+            avg_file_chunks,
+            messages_file,
         }
     })
 }
@@ -317,11 +363,65 @@ impl Default for SearchOpts {
 }
 
 /// דירוג הנתחים לשאילתה נתונה (דטרמיניסטי).
+#[cfg(test)]
 fn rank(idx: &Index, query: &str, file_filter: Option<&str>) -> Vec<u32> {
-    rank_scored(idx, query, file_filter).into_iter().map(|(c, _)| c).collect()
+    rank_scored(idx, query, file_filter, 5)
+        .into_iter()
+        .map(|(c, _)| c)
+        .collect()
 }
 
-fn rank_scored(idx: &Index, query: &str, file_filter: Option<&str>) -> Vec<(u32, f64)> {
+/// נרמול גודל קובץ: קובץ עם הרבה יותר נתחים מהממוצע נענש קלות, כדי שקובץ
+/// ענק ששמו מכיל מילה נפוצה לא ייקח את כל חמשת המקומות.
+fn file_len_factor(idx: &Index, fi: u32) -> f64 {
+    let nc = idx.file_chunks[fi as usize] as f64;
+    if nc <= idx.avg_file_chunks {
+        1.0
+    } else {
+        (idx.avg_file_chunks / nc).powf(FILE_LEN_NORM)
+    }
+}
+
+/// לכל היותר `MAX_PER_FILE_TOP` נתחים מאותו קובץ בחלון העליון — אלא אם
+/// פחות מ-3 קבצים שונים בכלל התאימו.
+fn diversify(idx: &Index, items: Vec<(u32, f64)>) -> Vec<(u32, f64)> {
+    let distinct: HashSet<u32> = items
+        .iter()
+        .take(20)
+        .map(|(c, _)| idx.chunks[*c as usize].file)
+        .collect();
+    if distinct.len() < 3 {
+        return items;
+    }
+    let mut head: Vec<(u32, f64)> = Vec::new();
+    let mut deferred: Vec<(u32, f64)> = Vec::new();
+    let mut rest: Vec<(u32, f64)> = Vec::new();
+    let mut per_file: HashMap<u32, usize> = HashMap::new();
+    for item in items {
+        if head.len() >= DIVERSITY_WINDOW {
+            rest.push(item);
+            continue;
+        }
+        let f = idx.chunks[item.0 as usize].file;
+        let c = per_file.entry(f).or_insert(0);
+        if *c >= MAX_PER_FILE_TOP {
+            deferred.push(item);
+            continue;
+        }
+        *c += 1;
+        head.push(item);
+    }
+    head.extend(deferred);
+    head.extend(rest);
+    head
+}
+
+fn rank_scored(
+    idx: &Index,
+    query: &str,
+    file_filter: Option<&str>,
+    top_k: usize,
+) -> Vec<(u32, f64)> {
     let qtokens = tokenize(&normalize(query));
 
     let allowed: Option<HashSet<u32>> = file_filter.map(|f| {
@@ -335,10 +435,16 @@ fn rank_scored(idx: &Index, query: &str, file_filter: Option<&str>) -> Vec<(u32,
         }
         set
     });
+    // טבלת קודי ההודעות מוחרגת מ-BM25 אלא אם ביקשו אותה במפורש בפילטר קובץ.
+    let drop_messages = allowed.is_none();
     let keep = |ci: u32| -> bool {
+        let f = idx.chunks[ci as usize].file;
+        if drop_messages && idx.messages_file == Some(f) {
+            return false;
+        }
         match &allowed {
             None => true,
-            Some(s) => s.contains(&idx.chunks[ci as usize].file),
+            Some(s) => s.contains(&f),
         }
     };
 
@@ -355,7 +461,7 @@ fn rank_scored(idx: &Index, query: &str, file_filter: Option<&str>) -> Vec<(u32,
             continue;
         }
         seen_groups.push(t.clone());
-        let variants = expand_clitics(t);
+        let variants = term_variants(t);
         let g: Vec<&String> = variants
             .iter()
             .filter_map(|v| idx.postings.get_key_value(v.as_str()).map(|(k, _)| k))
@@ -394,15 +500,17 @@ fn rank_scored(idx: &Index, query: &str, file_filter: Option<&str>) -> Vec<(u32,
                 let dl = (idx.chunks[p.chunk as usize].doc_len as f64).max(MIN_DOC_LEN);
                 let tf = p.tf as f64;
                 let denom = tf + BM25_K1 * (1.0 - BM25_B + BM25_B * dl / idx.avgdl);
-                let mut s = idf * (tf * (BM25_K1 + 1.0)) / denom;
+                let fi = idx.chunks[p.chunk as usize].file;
+                let mut boost = 1.0f64;
                 if p.in_heading {
-                    s *= HEADING_BOOST;
+                    boost += HEADING_BOOST - 1.0;
                 }
-                if idx.file_tokens[idx.chunks[p.chunk as usize].file as usize]
-                    .contains(t.as_str())
-                {
-                    s *= TITLE_BOOST;
+                if idx.file_tokens[fi as usize].contains(t.as_str()) {
+                    // ככל שהקובץ גדול יותר, התאמה לשמו היא ראיה חלשה יותר —
+                    // אחרת קובץ ענק ששמו מכיל מילה נפוצה לוקח את כל התוצאות.
+                    boost += (TITLE_BOOST - 1.0) * file_len_factor(idx, fi);
                 }
+                let s = idf * (tf * (BM25_K1 + 1.0)) / denom * boost.min(MAX_BOOST);
                 let e = best.entry(p.chunk).or_insert(0.0);
                 if s > *e {
                     *e = s;
@@ -421,11 +529,18 @@ fn rank_scored(idx: &Index, query: &str, file_filter: Option<&str>) -> Vec<(u32,
             .then(a.0.cmp(&b.0))
     });
 
-    // force-merge: מונחים שהם type= או key= מוכרים מקבלים עדיפות עליונה
+    // force-merge: מונחים שהם type= או key= מוכרים מקבלים עדיפות עליונה.
+    // כללים: type_index קודם ל-param_index תמיד; מפתחות "נוכחים בכל" (type,
+    // title, path) ומפתחות עם יותר מ-8 נתחים אינם סימן ממוקד ולכן מסוננים;
+    // סה"כ הכפוי מוגבל ל-top_k כדי לא להציף את התוצאות.
     let mut forced: Vec<u32> = Vec::new();
+    let mut forced_params: Vec<u32> = Vec::new();
     for t in &qtokens {
         // רק מזהים לטיניים סבירים (לא ספרות בודדות ולא מילים בעברית)
         if t.len() < 3 || !t.is_ascii() || !t.chars().any(|c| c.is_ascii_alphabetic()) {
+            continue;
+        }
+        if UBIQUITOUS_KEYS.contains(&t.as_str()) {
             continue;
         }
         if let Some(v) = idx.type_index.get(t.as_str()) {
@@ -436,16 +551,34 @@ fn rank_scored(idx: &Index, query: &str, file_filter: Option<&str>) -> Vec<(u32,
             }
         }
         if let Some(v) = idx.param_index.get(t.as_str()) {
-            for c in v {
-                if keep(*c) && !forced.contains(c) {
-                    forced.push(*c);
+            if v.len() <= MAX_FORCED_PARAM_CHUNKS {
+                for c in v {
+                    if keep(*c) && !forced_params.contains(c) {
+                        forced_params.push(*c);
+                    }
                 }
             }
         }
     }
+    for c in forced_params {
+        if !forced.contains(&c) {
+            forced.push(c);
+        }
+    }
+    forced.truncate(top_k.max(1));
+
+    if forced.is_empty() {
+        return diversify(idx, ranked);
+    }
 
     let top = ranked.first().map(|r| r.1).unwrap_or(1.0).max(1.0);
-    let mut out: Vec<(u32, f64)> = forced.iter().map(|c| (*c, top * 2.0)).collect();
+    // ניקוד יורד קלות בין הכפויים, כדי שהנתח המצהיר (הראשון ברשימת ה-type)
+    // יישאר ראשון גם אחרי מיזוג.
+    let mut out: Vec<(u32, f64)> = forced
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (*c, top * 2.0 - i as f64 * 1e-6))
+        .collect();
     let seen: HashSet<u32> = forced.iter().copied().collect();
     for (c, sc) in ranked {
         if !seen.contains(&c) {
@@ -461,7 +594,120 @@ fn parse_cursor(c: Option<&str>) -> usize {
         .unwrap_or(0)
 }
 
+/// הסרת עוגני `<a id="..."></a>` מהטקסט המוחזר (הקבצים עצמם לא משתנים).
+fn strip_anchors(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(p) = rest.find("<a id=\"") {
+        out.push_str(&rest[..p]);
+        match rest[p..].find("</a>") {
+            Some(e) => rest = &rest[p + e + 4..],
+            None => {
+                rest = "";
+                break;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// חיתוך מחרוזת לתקציב טוקנים, על גבול תווים.
+fn cut_to_tokens(s: &str, max_tok: usize) -> String {
+    if estimate_tokens(s) <= max_tok {
+        return s.to_string();
+    }
+    let max_chars = (max_tok as f64 * TOK_DIV) as usize;
+    s.chars().take(max_chars).collect::<String>().trim_end().to_string()
+}
+
+/// גוף שלם, חתוך שורה-שורה עד לתקציב.
+fn body_to_budget(text: &str, max_tok: usize) -> String {
+    let cleaned = strip_anchors(text);
+    let mut body = String::new();
+    let mut btok = 0usize;
+    for line in cleaned.split_inclusive('\n') {
+        let lt = estimate_tokens(line);
+        if btok + lt > max_tok && !body.is_empty() {
+            break;
+        }
+        body.push_str(line);
+        btok += lt;
+    }
+    if body.is_empty() {
+        body = cut_to_tokens(&cleaned, max_tok);
+    }
+    body.trim_end().to_string()
+}
+
+/// 2-3 שורות סביב השורה עם הכי הרבה מונחי שאילתה.
+fn snippet_for(text: &str, qterms: &HashSet<String>, max_tok: usize) -> String {
+    let cleaned = strip_anchors(text);
+    let lines: Vec<&str> = cleaned
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    if lines.is_empty() {
+        return String::new();
+    }
+    let mut best = 0usize;
+    let mut best_score = -1i32;
+    for (i, l) in lines.iter().enumerate() {
+        let mut sc = 0i32;
+        for t in tokenize(&normalize(l)) {
+            if qterms.contains(&t) {
+                sc += 1;
+            }
+        }
+        if sc > best_score {
+            best_score = sc;
+            best = i;
+        }
+    }
+    let from = best.saturating_sub(1);
+    let to = (best + 2).min(lines.len());
+    let mut out = String::new();
+    for l in &lines[from..to] {
+        if !out.is_empty() && estimate_tokens(&out) + estimate_tokens(l) > max_tok {
+            break;
+        }
+        out.push_str(l.trim_end());
+        out.push('\n');
+    }
+    cut_to_tokens(out.trim_end(), max_tok)
+}
+
+/// שורות טבלת קודי ההודעות עבור קודי `M####` שהופיעו בשאילתה.
+fn message_code_rows(idx: &'static Index, codes: &[String]) -> Option<String> {
+    let fi = idx.messages_file?;
+    let name = &idx.files[fi as usize];
+    let f = KNOWLEDGE_DIR.get_file(name)?;
+    let text = std::str::from_utf8(f.contents()).ok()?;
+    let mut out = String::new();
+    for line in text.lines() {
+        let n = normalize(line);
+        if codes.iter().any(|c| n.contains(c.as_str())) {
+            out.push_str(line.trim());
+            out.push('\n');
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+fn is_message_code(t: &str) -> bool {
+    let b = t.as_bytes();
+    b.len() == 5 && b[0] == b'm' && b[1..].iter().all(|c| c.is_ascii_digit())
+}
+
 /// חיפוש במאגר הידע — מחזיר טקסט שטוח המיועד למודל.
+///
+/// ברירת המחדל היא קטעים קצרים (כותרת + 2-3 שורות סביב ההתאמה, עד ~150 טוקן
+/// לתוצאה). אם יש תוצאה דומיננטית (ניקוד ≥ ×1.8 מהשנייה) מוחזר הגוף המלא שלה,
+/// כדי לחסוך למודל סבב `get_knowledge_section`.
 // עדיין לא נצרך בתוך ה-crate — לולאת הסוכן (agent/) נבנית בנפרד.
 #[allow(dead_code)]
 pub fn search_knowledge(query: &str, opts: SearchOpts) -> String {
@@ -470,8 +716,24 @@ pub fn search_knowledge(query: &str, opts: SearchOpts) -> String {
     let max_tokens = opts.max_tokens.clamp(200, 8000);
     let start = parse_cursor(opts.cursor.as_deref());
 
-    let ranked = rank(idx, query, opts.file.as_deref());
-    let total = ranked.len();
+    let qtokens = tokenize(&normalize(query));
+
+    // חיפוש ישיר של קוד הודעת מערכת M####
+    let codes: Vec<String> = qtokens.iter().filter(|t| is_message_code(t)).cloned().collect();
+    if !codes.is_empty() {
+        if let Some(rows) = message_code_rows(idx, &codes) {
+            return format!(
+                "[1] {} › רשימת הודעות מערכת\n{}",
+                MESSAGES_FILE.strip_suffix(".txt").unwrap_or(MESSAGES_FILE),
+                cut_to_tokens(rows.trim_end(), max_tokens)
+            );
+        }
+    }
+
+    let qterms: HashSet<String> = qtokens.iter().flat_map(|t| term_variants(t)).collect();
+
+    let scored = rank_scored(idx, query, opts.file.as_deref(), top_k);
+    let total = scored.len();
     if total == 0 {
         return format!("לא נמצאו תוצאות עבור: {}", query.trim());
     }
@@ -479,58 +741,43 @@ pub fn search_knowledge(query: &str, opts: SearchOpts) -> String {
     let mut out = String::new();
     let mut used = 0usize;
     let mut emitted = 0usize;
-    let mut i = start;
-    let mut oversize_next: Option<String> = None;
 
-    while i < total && emitted < top_k {
-        let ci = ranked[i];
-        let text = chunk_text(idx, ci);
-        let tok = estimate_tokens(text);
+    // תוצאה דומיננטית — מחזירים את הגוף המלא
+    let dominant = start == 0
+        && (total == 1 || scored[0].1 >= scored[1].1 * DOMINANT_RATIO)
+        && scored[0].1 > 0.0;
+    if dominant {
+        let ci = scored[0].0;
         let ch = &idx.chunks[ci as usize];
+        let body = body_to_budget(chunk_text(idx, ci), DOMINANT_BODY_TOKENS.min(max_tokens));
+        out.push_str(&format!(
+            "[1] {} › {}   ({} tok)\n{}\n\n",
+            file_label(idx, ci),
+            heading_label(&ch.heading),
+            estimate_tokens(&body),
+            body
+        ));
+        out.push_str("---\n");
+        out.push_str(&format!("נמצאו {} תוצאות, הוחזרה 1 (סעיף מלא).\n", total));
+        return out;
+    }
 
-        if used + tok > max_tokens {
-            if emitted == 0 {
-                // נתח בודד גדול מדי — מחזירים שורה-שורה עד לתקציב
-                let mut body = String::new();
-                let mut btok = 0usize;
-                let mut consumed_all = true;
-                for line in text.split_inclusive('\n') {
-                    let lt = estimate_tokens(line);
-                    if btok + lt > max_tokens && !body.is_empty() {
-                        consumed_all = false;
-                        break;
-                    }
-                    body.push_str(line);
-                    btok += lt;
-                }
-                out.push_str(&format!(
-                    "[1] {} › {}   ({} tok)\n{}\n",
-                    file_label(idx, ci),
-                    heading_label(&ch.heading),
-                    btok,
-                    body.trim_end()
-                ));
-                if !consumed_all || ch.part < ch.nparts {
-                    oversize_next = Some(format!(
-                        "{}#{}~{}",
-                        file_label(idx, ci),
-                        ch.heading,
-                        ch.part + 1
-                    ));
-                }
-                emitted = 1;
-                i += 1;
-            }
+    let mut i = start;
+    while i < total && emitted < top_k {
+        let ci = scored[i].0;
+        let ch = &idx.chunks[ci as usize];
+        let snip = snippet_for(chunk_text(idx, ci), &qterms, SNIPPET_TOKENS);
+        let tok = estimate_tokens(&snip);
+        if emitted > 0 && used + tok > max_tokens {
             break;
         }
-
         out.push_str(&format!(
             "[{}] {} › {}   ({} tok)\n{}\n\n",
             emitted + 1,
             file_label(idx, ci),
             heading_label(&ch.heading),
             tok,
-            text.trim_end()
+            snip
         ));
         used += tok;
         emitted += 1;
@@ -538,13 +785,7 @@ pub fn search_knowledge(query: &str, opts: SearchOpts) -> String {
     }
 
     out.push_str("---\n");
-    out.push_str(&format!("נמצאו {} תוצאות, הוחזרו {}.", total, emitted));
-    if let Some(next) = oversize_next {
-        out.push_str(&format!(" next: \"{}\"", next));
-    } else if i < total {
-        out.push_str(&format!(" להמשך: cursor=\"c{:x}\"", i));
-    }
-    out.push('\n');
+    out.push_str(&format!("נמצאו {} תוצאות, הוחזרו {}.\n", total, emitted));
     out
 }
 
@@ -1056,12 +1297,92 @@ pub fn type_catalog() -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
+// קטלוג הפרמטרים לפי סוג שלוחה
+// ---------------------------------------------------------------------------
+
+/// תקציב טוקנים לקטלוג הפרמטרים.
+const PARAM_CATALOG_TOKENS: usize = 1200;
+
+static PARAM_CATALOG: OnceLock<String> = OnceLock::new();
+
+fn render_param_catalog(rows: &[(String, Vec<&'static str>)]) -> String {
+    rows.iter()
+        .map(|(slug, keys)| format!("{}: {}", slug, keys.join(" ")))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// אילו מפתחות ext.ini מתועדים עבור כל סוג שלוחה — בלוק יציב-בייטים,
+/// שורה אחת לכל סוג, ממוין. מוגבל ל-~1,200 טוקן (המפתחות הנדירים נופלים ראשונים).
+// עדיין לא נצרך בתוך ה-crate — הפרומפט מחווט בנפרד.
+#[allow(dead_code)]
+pub fn param_catalog() -> &'static str {
+    PARAM_CATALOG.get_or_init(|| {
+        let idx = index();
+
+        // נתח -> המפתחות שהוגדרו בו
+        let mut by_chunk: HashMap<u32, Vec<&'static str>> = HashMap::new();
+        for (k, v) in &idx.param_index {
+            let k: &'static str = k.as_str();
+            for c in v {
+                by_chunk.entry(*c).or_default().push(k);
+            }
+        }
+
+        let known = catalog_slugs();
+        let mut rows: Vec<(String, Vec<&'static str>)> = Vec::new();
+        // כמה סוגים משתמשים בכל מפתח — מדד הנדירות
+        let mut global: HashMap<&'static str, usize> = HashMap::new();
+
+        let mut slugs: Vec<&String> = idx.type_index.keys().collect();
+        slugs.sort();
+        for slug in slugs {
+            if !known.is_empty() && !known.contains(slug) {
+                continue;
+            }
+            let mut keys: Vec<&'static str> = Vec::new();
+            for c in &idx.type_index[slug] {
+                if let Some(ks) = by_chunk.get(c) {
+                    for k in ks {
+                        // "type" טריוויאלי לכל סוג; title/path הם מפתחות אמיתיים ונשמרים
+                        if *k != "type" && !keys.contains(k) {
+                            keys.push(*k);
+                        }
+                    }
+                }
+            }
+            if keys.is_empty() {
+                continue;
+            }
+            keys.sort_unstable();
+            for k in &keys {
+                *global.entry(*k).or_insert(0) += 1;
+            }
+            rows.push((slug.clone(), keys));
+        }
+
+        let mut text = render_param_catalog(&rows);
+        let mut min_count = 1usize;
+        while estimate_tokens(&text) > PARAM_CATALOG_TOKENS && min_count < 200 {
+            min_count += 1;
+            for r in rows.iter_mut() {
+                r.1.retain(|k| *global.get(k).unwrap_or(&0) >= min_count);
+            }
+            rows.retain(|r| !r.1.is_empty());
+            text = render_param_catalog(&rows);
+        }
+        text
+    })
+}
+
+// ---------------------------------------------------------------------------
 // בדיקות
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use knowledge_text::expand_clitics;
 
 
     /// תמונת מצב קפואה של צינור הנרמול+הטוקניזציה. שינוי כאן פירושו שינוי
@@ -1253,19 +1574,17 @@ mod tests {
         }
     }
 
+    /// הרמזים `cursor=`/`next:` הוסרו מהפלט (הסכימה של הכלי לא יכלה לפעול
+    /// לפיהם), אבל השדה עצמו נשאר פונקציונלי לשימוש עתידי.
     #[test]
-    fn cursor_advances() {
-        let a = search_knowledge("תפריט", SearchOpts::default());
-        let cur = a
-            .lines()
-            .last()
-            .and_then(|l| l.split("cursor=\"").nth(1))
-            .map(|s| s.trim_end_matches('"').to_string());
-        assert!(cur.is_some(), "no cursor in: {}", a.lines().last().unwrap());
+    fn cursor_field_still_works_but_is_not_advertised() {
+        let a = search_knowledge("שלוחת תפריט", SearchOpts::default());
+        assert!(!a.contains("cursor="), "{}", a);
+        assert!(!a.contains("next:"), "{}", a);
         let b = search_knowledge(
-            "תפריט",
+            "שלוחת תפריט",
             SearchOpts {
-                cursor: cur,
+                cursor: Some("c2".to_string()),
                 ..Default::default()
             },
         );
@@ -1291,22 +1610,222 @@ mod tests {
     }
 
     #[test]
-    fn oversize_chunk_is_cut_line_by_line_with_next() {
-        // תקציב זעיר מכריח החזרה שורה-שורה של נתח בודד
+    fn results_are_capped_per_hit() {
         let out = search_knowledge(
             "תפריט",
             SearchOpts {
                 top_k: 5,
-                max_tokens: 200,
+                max_tokens: 3000,
                 ..Default::default()
             },
         );
         assert!(out.starts_with("[1] "), "{}", out);
-        let body: usize = out
-            .lines()
-            .filter(|l| !l.starts_with('[') && !l.starts_with("---") && !l.starts_with("נמצאו"))
-            .map(estimate_tokens)
-            .sum();
-        assert!(body <= 220, "body {} over budget", body);
+        for l in out.lines() {
+            if l.starts_with('[') && l.trim_end().ends_with("tok)") {
+                let n: usize = l[l.rfind('(').unwrap() + 1..]
+                    .trim_end_matches(" tok)")
+                    .trim()
+                    .parse()
+                    .unwrap_or(0);
+                // או קטע (≤150) או סעיף מלא של תוצאה דומיננטית (≤2000)
+                assert!(n <= DOMINANT_BODY_TOKENS, "hit too big: {} ({})", n, l);
+            }
+        }
+    }
+
+    // -- תיקון force-merge -----------------------------------------------
+
+    fn first_hit(query: &str) -> String {
+        let out = search_knowledge(query, SearchOpts { top_k: 5, ..Default::default() });
+        out.lines().next().unwrap_or("").to_string()
+    }
+
+    #[test]
+    fn type_queries_are_not_force_merged_into_the_same_list() {
+        let a = search_knowledge("type=record", SearchOpts { top_k: 5, ..Default::default() });
+        let b = search_knowledge("type=menu", SearchOpts { top_k: 5, ..Default::default() });
+        assert_ne!(a, b, "type=record and type=menu returned identical results");
+    }
+
+    #[test]
+    fn declaring_chunk_ranks_first_for_type_slug() {
+        let idx = index();
+        for (q, slug) in [("type=record", "record"), ("type=menu", "menu"), ("record", "record")] {
+            let declaring = idx.type_index[slug][0];
+            let top = rank(idx, q, None)[0];
+            assert_eq!(
+                top,
+                declaring,
+                "query {:?}: expected declaring chunk {} ({} › {}), got {} ({} › {})",
+                q,
+                declaring,
+                file_label(idx, declaring),
+                heading_label(&idx.chunks[declaring as usize].heading),
+                top,
+                file_label(idx, top),
+                heading_label(&idx.chunks[top as usize].heading),
+            );
+        }
+    }
+
+    // -- נרמול עברי דו-צדדי ------------------------------------------------
+
+    #[test]
+    fn suffix_stemming_is_symmetric() {
+        assert_eq!(knowledge_text::suffix_stem("הקלטות").as_deref(), Some("הקלט"));
+        assert_eq!(knowledge_text::suffix_stem("הקלטה").as_deref(), Some("הקלט"));
+        assert_eq!(knowledge_text::suffix_stem("שיחות").as_deref(), Some("שיח"));
+        // גזע קצר מדי — לא חותכים
+        assert_eq!(knowledge_text::suffix_stem("שנה"), None);
+        assert_eq!(knowledge_text::suffix_stem("menu"), None);
+        assert!(knowledge_text::term_variants("מהקלטות").contains(&"הקלט".to_string()));
+    }
+
+    /// הנרמול דו-הצדדי: גם צד הבנייה מאנדקס את הצורה המקוצרת, וגם טוקני שם
+    /// הקובץ מורחבים — כך ש-"זיהוי" מתאים לקובץ ששמו "הגדרות **הזיהוי** בכלל
+    /// המערכת", ו-"הקלטה" מתאים לקובץ "הקלטות".
+    #[test]
+    fn hebrew_normalization_is_two_sided() {
+        let idx = index();
+        let fi = idx
+            .files
+            .iter()
+            .position(|f| f == "הגדרות הזיהוי בכלל המערכת.txt")
+            .expect("file exists");
+        assert!(
+            idx.file_tokens[fi].contains("זיהוי"),
+            "file-name tokens are not clitic-expanded"
+        );
+        // צד הבנייה: הגזע קיים באינדקס אף שהמסמכים כותבים רק "הקלטות"/"הקלטה"
+        assert!(idx.postings.contains_key("הקלט"), "build side did not index the stem");
+        // השאילתה "זיהוי מתקשר" מחזירה נתחים על זיהוי המתקשר
+        let f = first_hit("זיהוי מתקשר");
+        assert!(f.contains("זיהוי") || f.contains("הזיהוי"), "got: {}", f);
+    }
+
+    #[test]
+    fn hebrew_query_finds_inflected_document() {
+        let out = search_knowledge("הקלטה של שיחה", SearchOpts { top_k: 3, ..Default::default() });
+        let top3: Vec<&str> = out.lines().filter(|l| l.starts_with('[')).take(3).collect();
+        assert!(
+            top3.iter().any(|l| l.contains("הקלטות")),
+            "expected הקלטות in top 3, got: {:?}",
+            top3
+        );
+    }
+
+    // -- גיוון ותקרת חיזוקים ----------------------------------------------
+
+    #[test]
+    fn no_single_file_monopolizes_the_top() {
+        let idx = index();
+        for q in ["תפריט", "הקלטה של שיחה", "שליחת הודעת sms", "זיהוי מתקשר"] {
+            let top: Vec<u32> = rank(idx, q, None).into_iter().take(5).collect();
+            if top.len() < 5 {
+                continue;
+            }
+            let files: Vec<u32> = top.iter().map(|c| idx.chunks[*c as usize].file).collect();
+            let distinct: HashSet<u32> = files.iter().copied().collect();
+            if distinct.len() < 3 {
+                continue; // פחות מ-3 קבצים תאמו בכלל — הכלל לא חל
+            }
+            for f in &distinct {
+                let n = files.iter().filter(|x| *x == f).count();
+                assert!(n <= MAX_PER_FILE_TOP, "query {:?}: file {} took {} of 5", q, f, n);
+            }
+        }
+    }
+
+    // -- טבלת קודי ההודעות --------------------------------------------------
+
+    #[test]
+    fn messages_table_is_excluded_but_code_lookup_works() {
+        let idx = index();
+        assert!(idx.messages_file.is_some());
+        let mf = idx.messages_file.unwrap();
+        for q in ["הודעה", "הודעת ברוכים הבאים", "שלוחה"] {
+            for c in rank(idx, q, None) {
+                assert_ne!(idx.chunks[c as usize].file, mf, "messages file leaked for {:?}", q);
+            }
+        }
+        let out = search_knowledge("M0002", SearchOpts::default());
+        assert!(out.contains("M0002"), "{}", out);
+        assert!(out.contains("מודול"), "{}", out);
+        // עדיין נגיש דרך get_knowledge_section
+        let sec = get_knowledge_section("רשימת הודעות מערכת", None, None).unwrap();
+        assert!(sec.contains("תוכן עניינים"));
+    }
+
+    // -- ניקוי עוגנים -------------------------------------------------------
+
+    #[test]
+    fn anchors_are_stripped_from_results() {
+        assert_eq!(strip_anchors("א<a id=\"x-y\"></a>ב"), "אב");
+        let out = search_knowledge("שלוחת תפריט", SearchOpts::default());
+        assert!(!out.contains("<a id="), "{}", out);
+    }
+
+    // -- קטלוג הפרמטרים -----------------------------------------------------
+
+    #[test]
+    fn param_catalog_is_deterministic_and_bounded() {
+        let a = param_catalog();
+        let b = param_catalog();
+        assert_eq!(a, b, "param_catalog is not byte-stable");
+        assert!(std::ptr::eq(a, b));
+        assert!(estimate_tokens(a) <= PARAM_CATALOG_TOKENS, "too big: {}", estimate_tokens(a));
+        assert!(a.lines().count() >= 10, "only {} lines", a.lines().count());
+        for l in a.lines() {
+            let (slug, keys) = l.split_once(": ").unwrap_or_else(|| panic!("bad line: {}", l));
+            assert!(!slug.is_empty() && !keys.is_empty());
+            assert!(!keys.split(' ').any(|k| k == "type"));
+        }
+        let mut sorted: Vec<&str> = a.lines().collect();
+        let orig = sorted.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, orig, "catalog lines are not sorted");
+    }
+
+    /// הדפסת דירוגים לבדיקה ידנית: `cargo test -- --ignored --nocapture rankings`
+    #[test]
+    #[ignore]
+    fn print_rankings() {
+        let idx = index();
+        for q in [
+            "type=record",
+            "type=menu",
+            "record",
+            "זיהוי מתקשר",
+            "הקלטה של שיחה",
+            "תפריט",
+            "תגדיר שלוחה 3 כתפריט עם 2 אפשרויות",
+        ] {
+            println!("\n=== {} ===", q);
+            for (i, (c, sc)) in rank_scored(idx, q, None, 5).into_iter().take(6).enumerate() {
+                println!(
+                    "  {}. [{:.3}] {} › {}",
+                    i + 1,
+                    sc,
+                    file_label(idx, c),
+                    heading_label(&idx.chunks[c as usize].heading)
+                );
+            }
+        }
+        println!();
+        for q in ["תפריט", "type=record", "הקלטה של שיחה"] {
+            let out = search_knowledge(q, SearchOpts::default());
+            println!("search_knowledge({:?}) = {} tok", q, estimate_tokens(&out));
+        }
+        println!("
+--- param_catalog (first 6 lines) ---");
+        for l in param_catalog().lines().take(6) {
+            println!("{}", l);
+        }
+        println!(
+            "param_catalog: {} chars, ~{} tok, {} lines",
+            param_catalog().len(),
+            estimate_tokens(param_catalog()),
+            param_catalog().lines().count()
+        );
     }
 }

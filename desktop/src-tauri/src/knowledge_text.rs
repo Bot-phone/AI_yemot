@@ -89,15 +89,13 @@ pub fn tokenize(norm: &str) -> Vec<String> {
     out
 }
 
-/// תחיליות (אותיות שימוש) שמורחבות בזמן שאילתה בלבד.
-#[allow(dead_code)] // בשימוש בצד השאילתה בלבד
+/// תחיליות (אותיות שימוש) שמורחבות בשני הצדדים (בנייה ושאילתה).
 pub const CLITICS: &[&str] = &[
     "ומש", "וכש", "ושה", "מה", "שה", "כש", "לה", "בה", "וה", "ול", "וב", "ומ", "וכ", "ו", "ה", "ב",
     "ל", "מ", "ש", "כ",
 ];
 
-/// מרחיב מונח שאילתה לתחיליות אפשריות (רק אם נשארות לפחות 2 אותיות).
-#[allow(dead_code)] // בשימוש בצד השאילתה בלבד
+/// מרחיב מונח לתחיליות אפשריות (רק אם נשארות לפחות 2 אותיות).
 pub fn expand_clitics(term: &str) -> Vec<String> {
     let mut out = vec![term.to_string()];
     let chars: Vec<char> = term.chars().collect();
@@ -116,6 +114,46 @@ pub fn expand_clitics(term: &str) -> Vec<String> {
                 out.push(rest);
             }
         }
+    }
+    out
+}
+
+/// סיומות עבריות נפוצות שנחתכות כדי לקבל גזע משותף (רבים/נקבה/סמיכות).
+pub const SUFFIXES: &[&str] = &["ות", "ים", "יה", "ה", "ת"];
+
+/// גזע ללא סיומת, רק אם נותרות לפחות 3 אותיות עבריות. אחרת `None`.
+pub fn suffix_stem(term: &str) -> Option<String> {
+    let chars: Vec<char> = term.chars().collect();
+    if !chars.iter().all(|c| is_hebrew_letter(*c)) {
+        return None;
+    }
+    for s in SUFFIXES {
+        let sl = s.chars().count();
+        if chars.len() < sl + 3 {
+            continue;
+        }
+        let tail: String = chars[chars.len() - sl..].iter().collect();
+        if tail == *s {
+            return Some(chars[..chars.len() - sl].iter().collect());
+        }
+    }
+    None
+}
+
+/// כל הווריאנטים של מונח: הצורה המקורית, הסרת אותיות שימוש, וגזע ללא סיומת.
+///
+/// משמש **בשני הצדדים** — הבנייה מאנדקסת כל וריאנט לאותו posting, והשאילתה
+/// מרחיבה באותו אופן, כך שהנרמול העברי סימטרי.
+pub fn term_variants(term: &str) -> Vec<String> {
+    let mut out = expand_clitics(term);
+    let mut i = 0usize;
+    while i < out.len() {
+        if let Some(st) = suffix_stem(&out[i]) {
+            if !out.contains(&st) {
+                out.push(st);
+            }
+        }
+        i += 1;
     }
     out
 }

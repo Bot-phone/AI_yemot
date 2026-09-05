@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 #[path = "src/knowledge_text.rs"]
 mod knowledge_text;
 
-use knowledge_text::{extract_key, extract_kv, hard_split, normalize, split_sections, tokenize};
+use knowledge_text::{
+    extract_key, extract_kv, hard_split, normalize, split_sections, term_variants, tokenize,
+};
 
 // ---------------------------------------------------------------------------
 // Chunking
@@ -64,9 +66,11 @@ struct Posting {
 fn main() {
     let t0 = std::time::Instant::now();
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
-    let kdir = manifest.join("knowledge");
+    // מאגר יחיד בשורש המאגר (repo root) — אין עותק כפול תחת src-tauri.
+    let kdir = manifest.join("..").join("..").join("knowledge");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/knowledge_text.rs");
+    let kdir = fs::canonicalize(&kdir).unwrap_or(kdir);
     println!("cargo:rerun-if-changed={}", kdir.display());
 
     let mut files: Vec<(String, String)> = Vec::new();
@@ -129,15 +133,21 @@ fn main() {
         let body_toks = tokenize(&normalize(body));
         doc_lens.push((head_toks.len() + body_toks.len()) as u32);
 
+        // כל מונח מאונדקס גם בצורת השטח וגם בווריאנטים שלו (אותיות שימוש +
+        // גזע ללא סיומת), כדי שהנרמול העברי יהיה סימטרי עם צד השאילתה.
         let mut tf: HashMap<String, (u32, bool)> = HashMap::new();
         for t in &head_toks {
-            let e = tf.entry(t.clone()).or_insert((0, false));
-            e.0 += 1;
-            e.1 = true;
+            for v in term_variants(t) {
+                let e = tf.entry(v).or_insert((0, false));
+                e.0 += 1;
+                e.1 = true;
+            }
         }
         for t in &body_toks {
-            let e = tf.entry(t.clone()).or_insert((0, false));
-            e.0 += 1;
+            for v in term_variants(t) {
+                let e = tf.entry(v).or_insert((0, false));
+                e.0 += 1;
+            }
         }
         for (t, (n, inh)) in tf {
             postings.entry(t).or_default().push(Posting {

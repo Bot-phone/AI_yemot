@@ -28,7 +28,7 @@
 6. **ניקוי רווחים** – הסרת רווחים בסופי שורות, כיווץ רצפי שורות ריקות, ואיחוד קווי הפרדה `---` עוקבים.
 
 ```bash
-python scraper/postprocess.py            # ניקוי כל knowledge/ + העתקה ל-desktop/src-tauri/knowledge
+python scraper/postprocess.py            # ניקוי כל knowledge/ (המאגר היחיד; הדסקטופ מטמיע אותו ישירות)
 python scraper/postprocess.py --dry-run  # דיווח מספרים בלבד (bytes/chars/tokens), ללא כתיבה
 python scraper/postprocess.py --check    # קוד יציאה 1 אם קיים קובץ שאינו נקי (שימושי ל-CI)
 ```
