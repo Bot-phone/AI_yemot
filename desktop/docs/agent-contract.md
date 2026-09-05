@@ -14,8 +14,12 @@ server state has not moved.
 
 Refining a task (`continue_agent_run`) is a **refinement of the same task**, not a conversational turn: it
 resumes the parent transcript and prepends the status of the parent's proposals (בוצע / בוטל / לא אושר).
-Nothing here carries free-form conversation state; when a task cannot be refined (parent evicted, unfinished,
-or past `CONTEXT_HARD_LIMIT`) the answer is a new task, not a longer thread.
+Nothing here carries free-form conversation state; when a task cannot be refined (still running, or past
+`CONTEXT_HARD_LIMIT`) the answer is a new task, not a longer thread.
+
+A **task** is one chain: the fresh run plus every refinement of it. Its `task_id` is the `run_id` of the
+chain's *first* run and never changes; each run of the chain rewrites the same record in the local task
+history (see "Task history" below), which is what lets a task be refined days later, after a restart.
 
 User-facing strings follow this model — "משימה", "שינויים מוצעים", "יומן שינויים", "מבנה הקו" — and avoid
 chat vocabulary ("צ'אט", "שיחה", "הודעה", "עוזר").
@@ -48,12 +52,13 @@ omits the cost from the line rather than showing a guess.
   "yemot_token": "…",             // held privately in Rust; never serialized outward
   "auto_apply": false,            // true = mutating tools execute immediately and real results feed the model
   "include_tree": true,           // append a ≤20-line "[מצב נוכחי]" root tree after the first user message
-  "attachments": []               // optional (serde default); audio files the user picked for this task
+  "attachments": [],              // optional (serde default); audio files the user picked for this task
+  "save_history": true            // optional (serde default true); false = this task is never written to disk
 }
 // Attachment
 { "id": "f1", "name": "ברכה.mp3", "local_path": "C:/…/ברכה.mp3", "size": 20480, "mime": "audio/mpeg" }
 // AgentRunStarted
-{ "run_id": "r_…" }
+{ "run_id": "r_…", "task_id": "r_…" }   // task_id == run_id for a fresh run
 ```
 
 Returns immediately; the loop runs in the background and reports through events. A second concurrent run is rejected with an error string.
@@ -78,7 +83,14 @@ Refines a finished task instead of starting over. The new run replays the parent
 - a_3 /5: לא אושר
 ```
 
-`בוצע` / `בוטל` / `לא אושר` come from the write state of the parent run, not from the proposal list — an id is `בוטל` once `undo_action` reversed it. The events are exactly a fresh run's (`agent:started` … `agent:finished`) under a **new** `run_id`. Errors (Hebrew, nothing started): the parent is not the run in the registry any more, the parent is still running, or the parent transcript alone already exceeds `CONTEXT_HARD_LIMIT` (`"המשימה ארוכה מדי להמשך, התחל משימה חדשה"`). `include_tree` is ignored — the tree is already in the transcript.
+`בוצע` / `בוטל` / `לא אושר` come from the write state of the parent run, not from the proposal list — an id is `בוטל` once `undo_action` reversed it. The events are exactly a fresh run's (`agent:started` … `agent:finished`) under a **new** `run_id`; the returned `task_id` is the parent's, because the chain continues.
+
+`parentRunId` is resolved in two steps:
+
+1. **the live parent** — the run still in the registry, with its transcript, proposals, attachments and the write state behind the status block. This is the path a refinement takes right after a task finishes.
+2. **the saved record** — when no such handle exists (a later run evicted it, or the app was restarted), `<app_data_dir>/tasks/<parentRunId>.json` is loaded, or, failing that, the task whose `last_run_id` equals `parentRunId`. So `parentRunId` accepts **either** a `task_id` or the `run_id` of the chain's newest run. The record supplies the transcript, the proposals, `applied_action_ids` (the "applied" set of the status block; the "undone" set is empty — an undone action shows as `לא אושר`) and the attachment list, which is re-validated exactly as a live parent's is: files that vanished move to the `[קבצים מצורפים שאינם זמינים עוד]` block instead of staying uploadable.
+
+Errors (Hebrew, nothing started): the parent is still running (`"המשימה הקודמת עדיין רצה"`), neither a live handle nor a saved record exists (`"המשימה הקודמת אינה זמינה עוד — התחל משימה חדשה"`), or the parent transcript alone already exceeds `CONTEXT_HARD_LIMIT` (`"המשימה ארוכה מדי להמשך, התחל משימה חדשה"`). `include_tree` is ignored — the tree is already in the transcript.
 
 ### `cancel_agent_run(runId: string) -> Result<(), String>`
 
@@ -122,6 +134,62 @@ The change log ("יומן שינויים") of every run still retained in the wr
 ```
 
 Rows are pruned with the rest of the write state (50 runs / 1 hour, cleared on logout). Re-approving an id after an undo replaces its row instead of adding a second one.
+
+### Task history — `list_task_history()`, `get_task_history(taskId)`, `delete_task_history(taskId)`, `clear_task_history()`
+
+"היסטוריית משימות": every task the app finished on this machine, so one can be reopened and refined later. Provided by `agent/history.rs`.
+
+```jsonc
+invoke("list_task_history")                  // -> TaskSummary[]  (newest first by updated_at_ms)
+invoke("get_task_history",    { taskId })    // -> TaskRecord     (transcript always [])
+invoke("delete_task_history", { taskId })    // -> null           (an unknown id is a no-op, not an error)
+invoke("clear_task_history")                 // -> number         (how many records were removed)
+
+// TaskSummary — the list row; never carries a transcript
+{
+  "task_id": "r_…", "last_run_id": "r_…",
+  "created_at_ms": 1757000000000, "updated_at_ms": 1757000090000,
+  "provider": "claude", "model": "claude-sonnet-4-5",
+  "title": "הפוך את שלוחה 3 לתפריט",   // first instruction, ≤ 80 characters, cut on a char boundary
+  "steps": 2,                          // instructions in the chain ("N שלבים")
+  "ok": true, "stop": "end_turn",
+  "cost_usd": 0.031,                   // chain total; null when no run of it was priced
+  "resumable": true                    // the saved transcript is non-empty
+}
+
+// TaskRecord — the whole task. `get_task_history` blanks `transcript`;
+// `continue_agent_run` reads the stored one in Rust and never ships it out.
+{
+  "task_id": "r_…", "last_run_id": "r_…",
+  "created_at_ms": 0, "updated_at_ms": 0,
+  "provider": "claude", "model": "claude-sonnet-4-5",
+  "instructions": ["…", "…"],          // the chain, oldest first
+  "final_text": "…",                   // the last run's answer
+  "ok": true, "stop": "end_turn",
+  "transcript": [ { "role": "user" | "assistant", "content": [ /* ContentBlock */ ] } ],
+  "attachments": [ /* Attachment */ ],
+  "actions": [ /* ProposedAction */ ], // the last run's proposals
+  "applied_action_ids": ["a_1"],       // applied and not undone
+  "usage": {                           // totals across the chain
+    "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0,
+    "turns": 0, "tool_calls": 0, "cost_usd": null
+  }
+}
+
+// ContentBlock, internally tagged
+{ "type": "text",        "text": "…" }
+{ "type": "tool_use",    "id": "toolu_…", "name": "get_extension_config", "input": { } }
+{ "type": "tool_result", "tool_use_id": "toolu_…", "name": "…", "content": "…", "is_error": false }
+{ "type": "thinking",    "raw": { } }
+```
+
+**Where it lives.** One JSON file per task at `<app_data_dir>/tasks/<task_id>.json` (Tauri's `app_data_dir()`; the directory is created on demand). Each write is atomic — `<file>.json.tmp` then a rename over the target — and a leftover `.tmp` from a crashed write is swept on the next prune.
+
+**When it is written.** At the end of every run that produced a transcript — ok or not, cancelled included — right after the transcript is handed to the run handle and before `agent:finished`. The newest run of a chain rewrites the whole record: the transcript and proposals are the last run's, the instruction list and the usage totals grow. `save_history: false` in the payload writes nothing and leaves an existing record for that chain untouched. A failed write is logged and swallowed: history is a convenience, never a reason for a run to fail. `approve_actions` and a successful `undo_action` refresh `applied_action_ids` in place (approval happens *after* the run ended, so the value written at save time is empty).
+
+**Retention.** At most 200 tasks and 100 MiB in total, pruned on every save, oldest `updated_at_ms` first. A corrupt or unreadable file is logged and skipped by the list rather than failing it.
+
+**Privacy.** The record holds the transcript, the proposals and the attachment list; it never holds the Yemot token, a provider API key or the system prompt, and `Attachment.local_path` is the only local path in it. It stays on this machine — nothing here is uploaded. The transcript does contain line content (`ext.ini` text, tool results): that is what makes a task resumable.
 
 ### `execute_yemot_actions(token, path, params: {key,value}[]) -> ExtensionUpdateResult`
 
@@ -180,7 +248,7 @@ Provided by `secrets.rs`. Store the Yemot token and provider API keys in the OS 
 | `agent:actions_proposed` | `{ run_id, actions: ProposedAction[] }` — emitted once when the model stops; the UI shows the approval list |
 | `agent:action_applied` | `{ run_id, action_id, ok, message, params: ParamOutcome[] }` |
 | `agent:retry` | `{ run_id, attempt, max, reason, wait_ms }` |
-| `agent:finished` | `{ run_id, ok, stop, final_text, usage }` — `stop ∈ end_turn, max_turns, cancelled, error, truncated, refusal` |
+| `agent:finished` | `{ run_id, task_id, ok, stop, final_text, usage }` — `stop ∈ end_turn, max_turns, cancelled, error, truncated, refusal`; `task_id` names the chain, for refreshing the task history |
 | `agent:error` | `{ run_id, code, message }` — `code ∈ session_expired, auth, bad_request, network, provider, internal` |
 
 ### Streaming
@@ -291,6 +359,7 @@ The Hebrew documentation corpus is compiled into a BM25 lexical index at build t
 
 - `autoApply` (bool, default false)
 - `includeTree` (bool, default true)
+- `ai_yemot_save_history` (bool, default true) — "שמור היסטוריית משימות במחשב זה"; sent as `save_history` on every fresh run and every refinement
 
 ## Frontend behaviour
 

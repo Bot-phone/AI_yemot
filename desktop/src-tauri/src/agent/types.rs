@@ -3,14 +3,15 @@
 //! Every provider maps *into* these types on the way out and *out of* them on
 //! the way back, so the runner never sees a provider-specific shape.
 
-use serde::Serialize;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
 // ---------------------------------------------------------------------------
 // Conversation
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Role {
     User,
     Assistant,
@@ -45,7 +46,93 @@ pub enum ContentBlock {
     Thinking(Value),
 }
 
-#[derive(Debug, Clone)]
+/// The persisted form of a `ContentBlock` (`agent/history.rs`).
+///
+/// `ContentBlock` keeps tuple variants because every provider maps into them;
+/// an internally tagged enum cannot carry a newtype variant, so the wire shape
+/// is spelled out once here instead of reshaping the variants the providers
+/// use. Field names are the contract the frontend reads.
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum WireBlock {
+    Text {
+        text: String,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+        input: Value,
+    },
+    ToolResult {
+        tool_use_id: String,
+        name: String,
+        content: String,
+        is_error: bool,
+    },
+    Thinking {
+        raw: Value,
+    },
+}
+
+impl From<&ContentBlock> for WireBlock {
+    fn from(b: &ContentBlock) -> Self {
+        match b {
+            ContentBlock::Text(text) => WireBlock::Text { text: text.clone() },
+            ContentBlock::ToolUse { id, name, input } => WireBlock::ToolUse {
+                id: id.clone(),
+                name: name.clone(),
+                input: input.clone(),
+            },
+            ContentBlock::ToolResult {
+                tool_use_id,
+                name,
+                content,
+                is_error,
+            } => WireBlock::ToolResult {
+                tool_use_id: tool_use_id.clone(),
+                name: name.clone(),
+                content: content.clone(),
+                is_error: *is_error,
+            },
+            ContentBlock::Thinking(raw) => WireBlock::Thinking { raw: raw.clone() },
+        }
+    }
+}
+
+impl From<WireBlock> for ContentBlock {
+    fn from(w: WireBlock) -> Self {
+        match w {
+            WireBlock::Text { text } => ContentBlock::Text(text),
+            WireBlock::ToolUse { id, name, input } => ContentBlock::ToolUse { id, name, input },
+            WireBlock::ToolResult {
+                tool_use_id,
+                name,
+                content,
+                is_error,
+            } => ContentBlock::ToolResult {
+                tool_use_id,
+                name,
+                content,
+                is_error,
+            },
+            WireBlock::Thinking { raw } => ContentBlock::Thinking(raw),
+        }
+    }
+}
+
+impl Serialize for ContentBlock {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        WireBlock::from(self).serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for ContentBlock {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        WireBlock::deserialize(d).map(ContentBlock::from)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
     pub content: Vec<ContentBlock>,

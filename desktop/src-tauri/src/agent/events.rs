@@ -103,6 +103,10 @@ pub struct RunUsage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentRunStarted {
     pub run_id: String,
+    /// The task this run belongs to — the `run_id` of the chain's first run.
+    /// A continuation of the task is addressed by this id, and it is what the
+    /// task history stores the record under.
+    pub task_id: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -224,12 +228,21 @@ pub fn retry(app: &AppHandle, run_id: &str, attempt: u32, max: u32, reason: &str
     );
 }
 
-pub fn finished(app: &AppHandle, run_id: &str, ok: bool, stop: &str, final_text: &str, usage: &RunUsage) {
+#[allow(clippy::too_many_arguments)]
+pub fn finished(
+    app: &AppHandle,
+    run_id: &str,
+    task_id: &str,
+    ok: bool,
+    stop: &str,
+    final_text: &str,
+    usage: &RunUsage,
+) {
     emit(
         app,
         "agent:finished",
         serde_json::json!({
-            "run_id": run_id, "ok": ok, "stop": stop,
+            "run_id": run_id, "task_id": task_id, "ok": ok, "stop": stop,
             "final_text": final_text, "usage": usage
         }),
     );

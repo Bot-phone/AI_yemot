@@ -40,6 +40,11 @@ pub fn run() {
             agent::runner::approve_actions,
             agent::runner::undo_action,
             agent::runner::list_applied_changes,
+            // Local task history ("היסטוריית משימות").
+            agent::history::list_task_history,
+            agent::history::get_task_history,
+            agent::history::delete_task_history,
+            agent::history::clear_task_history,
             secrets::secret_set, secrets::secret_get, secrets::secret_delete,
         ])
         .run(tauri::generate_context!())
