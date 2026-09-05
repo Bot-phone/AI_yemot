@@ -19,7 +19,10 @@
     error = null,
     /** @type {any} */
     finish = null,
-    finishLine = "",
+    /** "טוקנים: … · מטמון … · n סבבים · t שנ׳" — measured facts. */
+    statsLine = "",
+    /** "עלות משוערת: $… לפי מחירון …", or the "unknown model" line. */
+    costLine = "",
     elapsedLabel = "0.0",
     elapsedMs = 0,
     awaitingText = false,
@@ -55,6 +58,9 @@
 
   /** @type {HTMLElement | null} */
   let timelineRef = $state(null);
+
+  /** The cost disclaimer is one click away, not a permanent wall of text. */
+  let showCostNote = $state(false);
 
   // Hand the scroll container to the page, which owns the follow-the-bottom
   // logic; clear it again when this panel goes away.
@@ -188,10 +194,30 @@
       <div class="text-xs font-bold {finish.ok ? 'text-emerald-700' : 'text-slate-700'}">
         {finish.ok ? "✅" : "⚠️"} {stopLabel(finish.stop)}
       </div>
-      {#if finishLine}
+      {#if statsLine}
         <div class="text-xs text-slate-500 font-medium">
-          <bdi>{finishLine}</bdi>
+          <bdi>{statsLine}</bdi>
         </div>
+      {/if}
+      {#if costLine}
+        <div class="text-xs text-slate-500 font-medium flex items-center gap-1.5 flex-wrap">
+          <bdi>{costLine}</bdi>
+          <button
+            type="button"
+            onclick={() => (showCostNote = !showCostNote)}
+            title={t("cost_note")}
+            aria-label={t("cost_note_toggle")}
+            aria-expanded={showCostNote}
+            class="w-4 h-4 shrink-0 rounded-full border border-slate-300 text-slate-500 text-xs leading-none hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-600"
+          >
+            ?
+          </button>
+        </div>
+        {#if showCostNote}
+          <p class="text-xs text-slate-500 leading-relaxed bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
+            {t("cost_note")}
+          </p>
+        {/if}
       {/if}
     </div>
   {/if}

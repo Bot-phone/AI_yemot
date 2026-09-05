@@ -64,13 +64,32 @@
   function undoContents(undo) {
     return undo && typeof undo.contents === "string" ? undo.contents : "";
   }
+
+  /**
+   * Human label for a ProposedAction kind.
+   * @param {string} kind
+   */
+  function kindLabel(kind) {
+    if (kind === "upload_text_file") return t("kind_upload_file");
+    if (kind === "upload_audio_file") return t("kind_upload_audio");
+    return t("kind_set_params");
+  }
+
+  /**
+   * Yemot's API cannot delete an uploaded file, so an audio upload carries no
+   * undo record (contract R2) — the button would always fail.
+   * @param {string} kind
+   */
+  function canUndo(kind) {
+    return kind !== "upload_audio_file";
+  }
 </script>
 
 <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
   <div class="flex items-start justify-between border-b pb-3 gap-3 flex-wrap">
     <div>
-      <h3 class="text-sm font-bold text-slate-800">{t("agent_actions_title")}</h3>
-      <p class="text-xs text-slate-500">{t("agent_actions_hint")}</p>
+      <h3 class="text-sm font-bold text-slate-800">{t("proposed_changes_title")}</h3>
+      <p class="text-xs text-slate-500">{t("proposed_changes_hint")}</p>
     </div>
     <div class="flex items-center gap-2 flex-wrap">
       <button
@@ -152,9 +171,7 @@
               <span class="bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded font-mono font-bold">
                 <bdi dir="ltr">{action.path}</bdi>
               </span>
-              <span class="text-xs text-slate-500">
-                {action.kind === "upload_text_file" ? t("kind_upload_file") : t("kind_set_params")}
-              </span>
+              <span class="text-xs text-slate-500">{kindLabel(action.kind)}</span>
               {#if applied}
                 <span class="text-xs bg-emerald-100 text-emerald-800 border border-emerald-300 px-1.5 py-0.5 rounded-full font-semibold">
                   ✓ {t("action_already_applied")}
@@ -183,6 +200,18 @@
 
             {#if action.reason}
               <p class="text-slate-600 leading-relaxed">{action.reason}</p>
+            {/if}
+
+            {#if action.kind === "upload_audio_file" && action.params.length > 0}
+              <!-- An audio upload has no ext.ini diff worth a table: its whole
+                   payload is the file name and its size. -->
+              <ul class="text-slate-600 space-y-0.5">
+                {#each action.params as p}
+                  <li class="font-mono break-all">
+                    <bdi dir="ltr">{p.key}</bdi>: <bdi dir="ltr">{p.value}</bdi>
+                  </li>
+                {/each}
+              </ul>
             {/if}
 
             {#if action.warnings.length > 0}
@@ -312,7 +341,7 @@
                     </details>
                   {/if}
                 {/if}
-                {#if res.ok}
+                {#if res.ok && canUndo(action.kind)}
                   <div class="mt-1.5 flex items-center gap-2 flex-wrap">
                     {#if undoState[action.id] === "done"}
                       <span class="font-semibold text-slate-700">↩ {t("undo_done")}</span>
