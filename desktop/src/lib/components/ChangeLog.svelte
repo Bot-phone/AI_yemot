@@ -7,14 +7,18 @@
    * Rust WRITE_STATE, not from component state.
    */
   import { t } from "$lib/i18n.svelte.js";
-  import { formatTime } from "$lib/lineEditor.js";
+  import { formatLogTime } from "$lib/lineEditor.js";
 
   let {
     /** @type {any[]} */
     changes = [],
     loading = false,
     error = "",
-    /** action_id -> "" | "done" | "failed" | "unavailable" */
+    /**
+     * "<run_id>:<action_id>" -> "" | "done" | "failed" | "unavailable".
+     * Action ids restart at `a_1` in every run, so they only identify a row
+     * together with the run that produced it.
+     */
     /** @type {Record<string, string>} */
     undoState = {},
     /** @type {() => void} */
@@ -22,6 +26,15 @@
     /** @type {(runId: string, actionId: string) => void} */
     onUndo
   } = $props();
+
+  /**
+   * The identity of a logged change. `action_id` alone is not unique: it is
+   * assigned per run (`a_1`, `a_2`, …), and the log holds rows from every run.
+   * @param {any} change
+   */
+  function changeKey(change) {
+    return `${change?.run_id ?? ""}:${change?.action_id ?? ""}`;
+  }
 
   /** A one-line "key=value · key=value" summary of the change's params. */
   /** @param {any} change */
@@ -57,8 +70,9 @@
     <p class="text-xs text-slate-500 py-2">{t("changelog_empty")}</p>
   {:else}
     <ul class="divide-y divide-slate-100 max-h-80 overflow-y-auto">
-      {#each changes as c (c.action_id)}
+      {#each changes as c (changeKey(c))}
         {@const summary = paramsSummary(c)}
+        {@const key = changeKey(c)}
         <li class="py-2 flex items-start gap-3">
           <div class="flex-1 min-w-0 text-xs space-y-1">
             <div class="flex items-center gap-2 flex-wrap">
@@ -67,7 +81,7 @@
               </span>
               <span class="text-slate-700 font-medium">{c.label || c.kind}</span>
               <span class="text-slate-500 tabular-nums" dir="ltr">
-                {formatTime(c.applied_at_ms)}
+                {formatLogTime(c.applied_at_ms)}
               </span>
               {#if c.undone}
                 <span
@@ -86,9 +100,9 @@
             {#if summary}
               <p class="font-mono text-slate-500 break-all"><bdi dir="ltr">{summary}</bdi></p>
             {/if}
-            {#if undoState[c.action_id] === "failed"}
+            {#if undoState[key] === "failed"}
               <p class="text-rose-700 font-semibold">✗ {t("undo_failed")}</p>
-            {:else if undoState[c.action_id] === "unavailable"}
+            {:else if undoState[key] === "unavailable"}
               <p class="text-slate-500">{t("undo_unavailable")}</p>
             {/if}
           </div>

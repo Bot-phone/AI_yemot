@@ -185,6 +185,16 @@
   // ----- Run-feedback state -----
   /** Prompt of the last submitted run, so "נסה שוב" can repeat it. */
   let lastRunPrompt = $state("");
+  /**
+   * Whether that run was a fresh task or a continuation ("דייק את המשימה").
+   * Retry and the post-re-login auto-rerun have to reproduce the same kind:
+   * re-dispatching a refinement as a fresh run drops the parent's transcript and
+   * silently turns "also do X" into a task that only says "also do X".
+   * @type {"fresh" | "continue"}
+   */
+  let lastRunKind = $state("fresh");
+  /** Parent run id of the last continuation, "" when the last run was fresh. */
+  let lastRunParentId = $state("");
   /** Set when a run died with session_expired: re-run once the user logs back in. */
   let pendingRerun = $state(false);
   /** Wall-clock start of the run, for the running seconds counter. */
@@ -265,7 +275,11 @@
   let appliedChanges = $state([]);
   let changeLogLoading = $state(false);
   let changeLogError = $state("");
-  /** action_id -> "" | "done" | "failed" | "unavailable" */
+  /**
+   * "<run_id>:<action_id>" -> "" | "done" | "failed" | "unavailable".
+   * Action ids are per-run (`a_1` in every run) while the log spans runs, so the
+   * run id has to be part of the key — both here and in the `{#each}` above it.
+   */
   /** @type {Record<string, string>} */
   let changeLogUndoState = $state({});
 
@@ -587,12 +601,15 @@
    * @returns {string}
    */
   function describeLineError(e, unavailableKey, errorKey) {
-    if (isMissingCommand(e)) return t(unavailableKey);
+    // Session-expiry is checked first: Yemot's "SESSION_EXPIRED: …" text can
+    // itself contain a "not found"-ish phrase, and mistaking a dead session for
+    // an unregistered command hides the login prompt the user actually needs.
     if (isSessionExpired(e)) {
       openLoginModal();
       loginError = t("agent_session_expired");
       return t("agent_session_expired");
     }
+    if (isMissingCommand(e)) return t(unavailableKey);
     return t(errorKey, { error: errorText(e) });
   }
 
@@ -701,11 +718,21 @@
   // ----- Attachments (audio files for `upload_audio_file`) -----
 
   /**
+   * Attachment ids are positional and are baked into the running prompt's
+   * `[קבצים מצורפים]` block, so adding or removing one mid-run would renumber
+   * the list out from under the model — `a2` would stop meaning what the
+   * transcript says it means. The list is frozen (not cleared) while a run is
+   * in flight, and stays available for the next task afterwards.
+   */
+  let attachmentsLocked = $derived(agentRunning || agentStarting);
+
+  /**
    * The OS file picker. There is no command that stats a local file, so `size`
    * is sent as 0 and the MIME type is inferred from the extension — Rust
    * validates both against the real file before the run starts.
    */
   async function pickAttachments() {
+    if (attachmentsLocked) return;
     attachError = "";
     try {
       const picked = await openFileDialog({
@@ -739,6 +766,7 @@
 
   /** @param {string} id */
   function removeAttachment(id) {
+    if (attachmentsLocked) return;
     attachments = renumberAttachments(attachments.filter((a) => a.id !== id));
   }
 
@@ -780,12 +808,13 @@
    * @param {string} actionId
    */
   async function undoLoggedChange(logRunId, actionId) {
+    const key = `${logRunId}:${actionId}`;
     try {
       const r = /** @type {any} */ (
         await invoke("undo_action", { runId: logRunId, actionId })
       );
       const outcome = r?.ok ? "done" : "failed";
-      changeLogUndoState = { ...changeLogUndoState, [actionId]: outcome };
+      changeLogUndoState = { ...changeLogUndoState, [key]: outcome };
       // Keep the approval panel in step when it is showing the same action.
       if (runId === logRunId) {
         undoState = { ...undoState, [actionId]: outcome };
@@ -793,9 +822,12 @@
       }
     } catch (e) {
       console.error("undo_action failed:", e);
+      // Routed through `describeLineError` for its side effect: a dead Yemot
+      // session reopens the login modal instead of failing silently here.
+      describeLineError(e, "undo_unavailable", "comm_error");
       changeLogUndoState = {
         ...changeLogUndoState,
-        [actionId]: isMissingCommand(e) ? "unavailable" : "failed"
+        [key]: isMissingCommand(e) ? "unavailable" : "failed"
       };
     }
     await loadChangeLog();
@@ -1100,9 +1132,13 @@
       listen("agent:action_applied", (event) => {
         const p = /** @type {any} */ (event.payload);
         if (!isCurrentRun(p) || !p.action_id) return;
+        // Merge, never replace: the event and the `approve_actions` result carry
+        // overlapping halves of the same row (only the invoke result has the
+        // `undo` record), and either one can land second.
         actionResults = {
           ...actionResults,
           [p.action_id]: {
+            ...(actionResults[p.action_id] ?? {}),
             action_id: p.action_id,
             ok: !!p.ok,
             message: p.message ?? "",
@@ -1270,6 +1306,8 @@
     resetAgentRun();
     await setupAgentListeners();
 
+    lastRunKind = "fresh";
+    lastRunParentId = "";
     lastPayloadModel = payloadModel;
     agentStarting = true;
     agentRunning = true;
@@ -1296,17 +1334,76 @@
   }
 
   /**
+   * Everything `resetAgentRun` clears, so a continuation that Rust refuses can
+   * put the panel back exactly as the user left it — unapproved proposals
+   * included. Wiping them on a rejected continuation loses work that was never
+   * written to the line and cannot be re-derived without another model call.
+   */
+  function snapshotAgentRun() {
+    return {
+      approvalNotice,
+      confirmRisky,
+      undoState,
+      undoMessages,
+      refineError,
+      timelineAtBottom,
+      runId,
+      agentRunning,
+      agentCancelling,
+      agentTurn,
+      agentMaxTurns,
+      agentTimeline,
+      agentRetryNotice,
+      agentFinish,
+      agentError,
+      proposedActions,
+      actionResults
+    };
+  }
+
+  /** @param {ReturnType<typeof snapshotAgentRun>} s */
+  function restoreAgentRun(s) {
+    approvalNotice = s.approvalNotice;
+    confirmRisky = s.confirmRisky;
+    undoState = s.undoState;
+    undoMessages = s.undoMessages;
+    refineError = s.refineError;
+    timelineAtBottom = s.timelineAtBottom;
+    runId = s.runId;
+    agentRunning = s.agentRunning;
+    agentCancelling = s.agentCancelling;
+    agentTurn = s.agentTurn;
+    agentMaxTurns = s.agentMaxTurns;
+    agentTimeline = s.agentTimeline;
+    agentRetryNotice = s.agentRetryNotice;
+    agentFinish = s.agentFinish;
+    agentError = s.agentError;
+    proposedActions = s.proposedActions;
+    actionResults = s.actionResults;
+  }
+
+  /**
    * "דייק את המשימה" — continue the finished run with one more instruction.
    * Rust replays the parent's transcript (so the cached prefix still hits) and
    * hands back a brand-new run id, which the panel treats like any other run.
+   *
+   * The panel is cleared *before* the invoke on purpose: `isCurrentRun` can only
+   * adopt the new run's id while `runId` is null and `agentStarting` is true, so
+   * clearing afterwards would drop every event the run emits in the meantime.
+   * A rejection is covered by the snapshot instead — nothing is lost either way.
+   *
+   * @param {string} [parentIdArg] parent to continue; defaults to the run on screen
+   * @param {string} [textArg] instruction; defaults to the refine input
+   * @returns {Promise<boolean>} true when Rust accepted the continuation
    */
-  async function continueAgentRun() {
-    const text = refineText.trim();
-    const parentRunId = runId;
-    if (!text || !parentRunId || refineBusy) return;
+  async function continueAgentRun(parentIdArg, textArg) {
+    const text = (textArg ?? refineText).trim();
+    const parentRunId = parentIdArg ?? runId;
+    if (!text || !parentRunId || refineBusy) return false;
 
     const payload = buildRunPayload(lastPayloadModel || selectedModel, text, false);
     const chain = [...taskChain];
+    const snapshot = snapshotAgentRun();
 
     refineBusy = true;
     refineError = "";
@@ -1327,17 +1424,21 @@
       if (id && !runId) runId = id;
       taskChain = [...chain, text];
       lastRunPrompt = text;
+      lastRunKind = "continue";
+      lastRunParentId = parentRunId;
       refineText = "";
+      return true;
     } catch (e) {
       teardownAgentListeners();
       stopRunTimer();
-      agentRunning = false;
+      restoreAgentRun(snapshot);
       isLoading = false;
       statusMessage = "";
       taskChain = chain;
       refineError = isMissingCommand(e)
         ? t("refine_unavailable")
         : t("comm_error", { error: errorText(e) });
+      return false;
     } finally {
       agentStarting = false;
       refineBusy = false;
@@ -1440,7 +1541,8 @@
       /** @type {Record<string, any>} */
       const merged = { ...actionResults };
       for (const r of list) {
-        if (r && r.action_id) merged[r.action_id] = r;
+        // Same merge as the `agent:action_applied` handler, from the other side.
+        if (r && r.action_id) merged[r.action_id] = { ...(merged[r.action_id] ?? {}), ...r };
       }
       actionResults = merged;
       const done = list.filter((r) => r && r.ok).length;
@@ -1449,7 +1551,9 @@
       await loadChangeLog();
       if (selectedExtPath) void loadExtension(selectedExtPath);
     } catch (e) {
-      approvalNotice = t("comm_error", { error: e });
+      // A `SESSION_EXPIRED:` rejection is the model-facing wording; the user
+      // gets the Hebrew copy and the login modal instead.
+      approvalNotice = describeLineError(e, "request_failed", "comm_error");
       statusMessage = "";
     } finally {
       isLoading = false;
@@ -1476,11 +1580,12 @@
     } catch (e) {
       console.error("undo_action failed:", e);
       // Only a missing command means "undo is unavailable in this build"; every
-      // other rejection is a real failure and its text has to reach the user.
-      const text = e instanceof Error ? e.message : String(e ?? "");
-      const missing = /not (found|allowed)|unknown command|command .* not/i.test(text);
+      // other rejection is a real failure and its text has to reach the user —
+      // localized, and with a dead session reopening the login modal.
+      const missing = isMissingCommand(e);
+      const message = describeLineError(e, "undo_unavailable", "comm_error");
       undoState = { ...undoState, [actionId]: missing ? "unavailable" : "failed" };
-      undoMessages = { ...undoMessages, [actionId]: missing ? "" : text };
+      undoMessages = { ...undoMessages, [actionId]: missing ? "" : message };
     }
   }
 
@@ -1984,8 +2089,24 @@
     }
   }
 
-  /** Re-run the last request after a failure. */
+  /**
+   * Re-run the last request after a failure — as the same *kind* of run it was.
+   * A refinement re-dispatched as a fresh task would silently lose the parent's
+   * transcript, so a continuation goes back through `continue_agent_run`; if
+   * Rust refuses it (the parent run is gone), the user is told so and gets the
+   * text back in the refine box rather than a restarted, context-free run.
+   */
   async function retryRun() {
+    if (lastRunKind === "continue" && lastRunParentId && lastRunPrompt && !refineBusy) {
+      const text = lastRunPrompt;
+      const ok = await continueAgentRun(lastRunParentId, text);
+      if (!ok) {
+        refineText = text;
+        refineError = t("refine_parent_gone");
+        errorMessage = t("refine_parent_gone");
+      }
+      return;
+    }
     if (lastRunPrompt) promptText = lastRunPrompt;
     await handleSubmit();
   }
@@ -2066,9 +2187,11 @@
     // A fresh session means a fresh view of the line.
     void loadTree();
     if (selectedExtPath) void loadExtension(selectedExtPath);
-    // A run that died on `session_expired` picks up again by itself.
+    // A run that died on `session_expired` picks up again by itself — through
+    // `retryRun`, so a continuation resumes as a continuation instead of being
+    // demoted to a fresh task that has forgotten everything before it.
     if (rerun) {
-      await handleSubmit();
+      await retryRun();
     }
   }
 
@@ -2392,7 +2515,8 @@
                 <button
                   type="button"
                   onclick={pickAttachments}
-                  class="text-xs px-2.5 py-1 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 transition focus-visible:outline-2 focus-visible:outline-blue-600"
+                  disabled={attachmentsLocked}
+                  class="text-xs px-2.5 py-1 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 transition disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-blue-600"
                 >
                   🎵 {t("attach_audio")}
                 </button>
@@ -2410,15 +2534,19 @@
                         <span class="text-slate-700 max-w-[14rem] truncate">
                           <bdi dir="ltr">{a.name}</bdi>
                         </span>
-                        {#if formatSize(a.size)}
+                        <!-- The picker cannot stat a local file, so `size` is 0
+                             until Rust reads it: "0 B" would be a wrong fact,
+                             where no size at all is merely a missing one. -->
+                        {#if a.size > 0}
                           <span class="text-slate-500" dir="ltr">{formatSize(a.size)}</span>
                         {/if}
                         <button
                           type="button"
                           onclick={() => removeAttachment(a.id)}
+                          disabled={attachmentsLocked}
                           aria-label={`${t("attachment_remove")}: ${a.name}`}
                           title={t("attachment_remove")}
-                          class="text-slate-400 hover:text-rose-700 rounded focus-visible:outline-2 focus-visible:outline-blue-600"
+                          class="text-slate-400 hover:text-rose-700 rounded disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-blue-600"
                         >
                           ✕
                         </button>
@@ -2569,7 +2697,7 @@
               />
               <button
                 type="button"
-                onclick={continueAgentRun}
+                onclick={() => void continueAgentRun()}
                 disabled={refineBusy || isLoading || !refineText.trim()}
                 class="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700"
               >
