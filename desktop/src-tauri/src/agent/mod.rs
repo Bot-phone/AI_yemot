@@ -2,6 +2,7 @@
 //! approval flow. See `docs/agent-contract.md` for the command/event contract.
 
 pub mod events;
+pub mod history;
 pub mod pricing;
 pub mod prompt;
 pub mod providers;
