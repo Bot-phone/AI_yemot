@@ -154,6 +154,9 @@ pub fn messages_json(system: &[String], messages: &[Message]) -> Value {
 /// `max_completion_tokens`, and accept only the default temperature.
 pub fn is_reasoning_model(model: &str) -> bool {
     let m = model.trim().to_ascii_lowercase();
+    // Gateways (OpenRouter, LiteLLM, …) prefix the id with the vendor:
+    // `openai/o3-mini` is the same reasoning model as `o3-mini`.
+    let m = m.rsplit('/').next().unwrap_or(m.as_str());
     ["o1", "o3", "o4", "gpt-5"].iter().any(|p| m.starts_with(p))
 }
 
@@ -466,7 +469,7 @@ impl OpenAiCompatible {
             .request(req, true)
             .send()
             .await
-            .map_err(|e| classify_reqwest(&e))?;
+            .map_err(classify_reqwest)?;
         let status = res.status().as_u16();
         let retry_after = retry_after_of(res.headers());
         if !(200..300).contains(&status) {
@@ -525,11 +528,11 @@ impl OpenAiCompatible {
             .request(req, false)
             .send()
             .await
-            .map_err(|e| classify_reqwest(&e))?;
+            .map_err(classify_reqwest)?;
 
         let status = res.status().as_u16();
         let retry_after = retry_after_of(res.headers());
-        let text = res.text().await.map_err(|e| classify_reqwest(&e))?;
+        let text = res.text().await.map_err(classify_reqwest)?;
         if !(200..300).contains(&status) {
             return Err(classify_status(status, retry_after, &text));
         }
@@ -631,6 +634,11 @@ mod tests {
         for m in ["gpt-4.1-mini", "gpt-4o", "llama-3.3-70b-versatile"] {
             assert!(!is_reasoning_model(m), "{}", m);
         }
+        // a gateway prefixes the vendor; the model behind it is unchanged
+        for m in ["openai/o3-mini", "azure/openai/gpt-5", "OpenAI/O4-Mini"] {
+            assert!(is_reasoning_model(m), "{}", m);
+        }
+        assert!(!is_reasoning_model("openai/gpt-4o"));
     }
 
     #[test]

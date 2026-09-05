@@ -48,34 +48,38 @@ impl Gemini {
         let u = self.url_for("streamGenerateContent");
         if u.contains("alt=sse") {
             u
-        } else {
+        } else if u.contains('?') {
             format!("{}&alt=sse", u)
+        } else {
+            format!("{}?alt=sse", u)
         }
     }
 
+    /// The API key is deliberately NOT in the query string: a transport error,
+    /// a redirect or a log line would then carry the key. It travels in the
+    /// `x-goog-api-key` header instead (see [`Self::authed`]).
     fn url_for(&self, method: &str) -> String {
         if self.base_url.is_empty() {
             format!(
-                "https://generativelanguage.googleapis.com/v1beta/models/{}:{}?key={}",
-                self.model, method, self.api_key
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:{}",
+                self.model, method
             )
         } else if self.base_url.ends_with(":generateContent") {
-            let base = self
-                .base_url
-                .trim_end_matches(":generateContent")
-                .to_string();
-            let base = format!("{}:{}", base, method);
-            if self.base_url.contains("key=") {
-                base
-            } else {
-                format!("{}?key={}", base, self.api_key)
-            }
-        } else {
             format!(
-                "{}/models/{}:{}?key={}",
-                self.base_url, self.model, method, self.api_key
+                "{}:{}",
+                self.base_url.trim_end_matches(":generateContent"),
+                method
             )
+        } else {
+            format!("{}/models/{}:{}", self.base_url, self.model, method)
         }
+    }
+
+    fn authed(&self, url: String) -> reqwest::RequestBuilder {
+        http_ai()
+            .post(url)
+            .header("x-goog-api-key", &self.api_key)
+            .header("Content-Type", "application/json")
     }
 }
 
@@ -410,14 +414,13 @@ impl Gemini {
         cancel: &CancellationToken,
         on_delta: DeltaSink<'_>,
     ) -> Result<ProviderResponse, ProviderError> {
-        let res = http_ai()
-            .post(self.stream_url())
-            .header("Content-Type", "application/json")
+        let res = self
+            .authed(self.stream_url())
             .header("Accept", "text/event-stream")
             .json(&build_body(req))
             .send()
             .await
-            .map_err(|e| classify_reqwest(&e))?;
+            .map_err(classify_reqwest)?;
         let status = res.status().as_u16();
         let retry_after = retry_after_of(res.headers());
         if !(200..300).contains(&status) {
@@ -468,17 +471,16 @@ impl Gemini {
     }
 
     async fn send_once(&self, req: &ProviderRequest) -> Result<ProviderResponse, ProviderError> {
-        let res = http_ai()
-            .post(self.url())
-            .header("Content-Type", "application/json")
+        let res = self
+            .authed(self.url())
             .json(&build_body(req))
             .send()
             .await
-            .map_err(|e| classify_reqwest(&e))?;
+            .map_err(classify_reqwest)?;
 
         let status = res.status().as_u16();
         let retry_after = retry_after_of(res.headers());
-        let text = res.text().await.map_err(|e| classify_reqwest(&e))?;
+        let text = res.text().await.map_err(classify_reqwest)?;
         if !(200..300).contains(&status) {
             return Err(classify_status(status, retry_after, &text));
         }
@@ -649,15 +651,32 @@ mod tests {
     #[test]
     fn url_variants() {
         let g = Gemini::new("K".into(), "gemini-2.5-flash".into(), String::new());
-        assert!(g.url().contains("/models/gemini-2.5-flash:generateContent?key=K"));
+        assert!(g.url().ends_with("/models/gemini-2.5-flash:generateContent"));
         let g2 = Gemini::new("K".into(), "m".into(), "https://p.io/v1beta".into());
-        assert_eq!(g2.url(), "https://p.io/v1beta/models/m:generateContent?key=K");
+        assert_eq!(g2.url(), "https://p.io/v1beta/models/m:generateContent");
         let g3 = Gemini::new(
             "K".into(),
             "m".into(),
             "https://p.io/v1beta/models/m:generateContent".into(),
         );
-        assert!(g3.url().ends_with("?key=K"));
+        assert_eq!(g3.url(), "https://p.io/v1beta/models/m:generateContent");
+    }
+
+    /// The key must never reach a URL: URLs land in error strings, logs and
+    /// redirects. It travels in `x-goog-api-key`.
+    #[test]
+    fn no_gemini_url_ever_carries_the_api_key() {
+        for base in [
+            "",
+            "https://p.io/v1beta",
+            "https://p.io/v1beta/models/m:generateContent",
+        ] {
+            let g = Gemini::new("SECRETKEY".into(), "m".into(), base.into());
+            for u in [g.url(), g.stream_url()] {
+                assert!(!u.contains("key="), "{} leaks the key: {}", base, u);
+                assert!(!u.contains("SECRETKEY"), "{} leaks the key: {}", base, u);
+            }
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -671,14 +690,13 @@ mod tests {
         assert!(u.contains(":streamGenerateContent"));
         assert!(!u.contains(":generateContent?"));
         assert!(u.contains("alt=sse"));
-        assert!(u.contains("key=K"));
         // the non-streaming URL is untouched
-        assert!(g.url().contains(":generateContent?key=K"));
+        assert!(g.url().ends_with(":generateContent"));
 
         let g2 = Gemini::new("K".into(), "m".into(), "https://p.io/v1beta".into());
         assert_eq!(
             g2.stream_url(),
-            "https://p.io/v1beta/models/m:streamGenerateContent?key=K&alt=sse"
+            "https://p.io/v1beta/models/m:streamGenerateContent?alt=sse"
         );
     }
 

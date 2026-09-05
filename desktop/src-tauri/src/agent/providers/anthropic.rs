@@ -145,7 +145,11 @@ pub fn messages_json(messages: &[Message]) -> Value {
 /// generation (Haiku here) only understands an explicit thinking budget, and
 /// rejects `output_config` outright. Everything newer keeps adaptive + effort.
 pub fn wants_adaptive_thinking(model: &str) -> bool {
-    !model.to_ascii_lowercase().starts_with("claude-haiku-4-5")
+    let m = model.to_ascii_lowercase();
+    // `adaptive` thinking and `output_config.effort` exist only from the
+    // generation after 4-5 / 4-1 (sonnet-4-5, opus-4-1, haiku-4-5): asking an
+    // older model for them is a 400.
+    !(m.starts_with("claude-haiku-4-5") || m.contains("-4-5") || m.contains("-4-1"))
 }
 
 pub fn build_body(req: &ProviderRequest, stream: bool) -> Value {
@@ -543,7 +547,7 @@ impl Anthropic {
             .request(req, true)
             .send()
             .await
-            .map_err(|e| classify_reqwest(&e))?;
+            .map_err(classify_reqwest)?;
         let status = res.status().as_u16();
         let retry_after = retry_after_of(res.headers());
         if !(200..300).contains(&status) {
@@ -599,10 +603,10 @@ impl Anthropic {
             .request(req, false)
             .send()
             .await
-            .map_err(|e| classify_reqwest(&e))?;
+            .map_err(classify_reqwest)?;
         let status = res.status().as_u16();
         let retry_after = retry_after_of(res.headers());
-        let text = res.text().await.map_err(|e| classify_reqwest(&e))?;
+        let text = res.text().await.map_err(classify_reqwest)?;
 
         if !(200..300).contains(&status) {
             return Err(classify_status(status, retry_after, &text));
@@ -726,6 +730,18 @@ mod tests {
 
         // dated haiku ids too
         assert!(!wants_adaptive_thinking("claude-haiku-4-5-20251001"));
+        // the whole 4-5 / 4-1 generation predates adaptive thinking
+        for m in [
+            "claude-sonnet-4-5",
+            "claude-sonnet-4-5-20250929",
+            "claude-opus-4-1",
+            "claude-opus-4-1-20250805",
+        ] {
+            assert!(!wants_adaptive_thinking(m), "{} predates adaptive", m);
+            let b = build_body_t(&fixture_req(m));
+            assert_eq!(b["thinking"]["type"], json!("enabled"), "{}", m);
+            assert!(b.get("output_config").is_none(), "{}", m);
+        }
         // everything newer keeps adaptive + effort
         for m in [
             "claude-opus-5",

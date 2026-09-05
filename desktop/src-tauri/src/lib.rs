@@ -17,11 +17,10 @@ pub fn run() {
             knowledge::search_knowledge_files,
             updater::check_for_updates,
             yemot::check_yemot_token,
-            yemot::request_yemot_mfa,
-            yemot::verify_yemot_mfa,
-            yemot::execute_yemot_action,
+            // `execute_yemot_actions` is still the script-mode write path in
+            // +page.svelte; the single-key / MFA-modal / ext-preview commands it
+            // used to sit next to had no caller left and are gone.
             yemot::execute_yemot_actions,
-            yemot::read_extension_config,
             yemot::login_yemot,
             yemot::get_mfa_methods,
             yemot::send_mfa_code,

@@ -314,18 +314,25 @@ pub struct ExtRead {
     pub source: ExtSource,
 }
 
+/// Stable fingerprint of one file's state (existence + contents). Used to
+/// detect a server-side change between proposal and approval, and between an
+/// apply and its undo.
+///
+/// FNV-1a: no dependency, and a collision here only costs a refused write.
+pub fn content_hash(exists: bool, text: &str) -> String {
+    let text = if exists { text } else { "" };
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in text.as_bytes() {
+        hash ^= *b as u64;
+        hash = hash.wrapping_mul(0x100_0000_01b3);
+    }
+    format!("{}:{:x}", exists, hash)
+}
+
 impl ExtRead {
     /// Stable fingerprint of the file as it was when this snapshot was taken.
-    /// Used to detect a server-side change between proposal and approval.
     pub fn snapshot_hash(&self) -> String {
-        let text = if self.exists { self.ini.to_text() } else { String::new() };
-        // FNV-1a: no dependency, and collisions here only cost a refused write.
-        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-        for b in text.as_bytes() {
-            hash ^= *b as u64;
-            hash = hash.wrapping_mul(0x100_0000_01b3);
-        }
-        format!("{}:{:x}", self.exists, hash)
+        content_hash(self.exists, &self.ini.to_text())
     }
 }
 
@@ -1069,22 +1076,6 @@ pub struct YemotSessionResult {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct YemotMfaResult {
-    pub success: bool,
-    pub message: String,
-    pub new_token: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct YemotActionResult {
-    pub success: bool,
-    pub path: String,
-    pub key: String,
-    pub value: String,
-    pub message: String,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ExtParam {
     pub key: String,
     pub value: String,
@@ -1097,15 +1088,6 @@ pub struct ExtensionUpdateResult {
     pub params: Vec<ParamOutcome>,
     pub message: String,
     pub verified: bool,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ExtReadDto {
-    pub exists: bool,
-    pub path: String,
-    pub pairs: Vec<(String, String)>,
-    pub size: Option<u64>,
-    pub mtime: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -1248,115 +1230,6 @@ pub async fn check_yemot_token(token: String) -> Result<YemotSessionResult, Stri
     })
 }
 
-#[tauri::command]
-pub async fn request_yemot_mfa(
-    token: String,
-    mfa_token: String,
-    method: String, // "call" or "sms"
-) -> Result<YemotMfaResult, String> {
-    let json = yemot_post(
-        "SendMfaCode",
-        Some(token.trim()),
-        &[("mfaToken", &mfa_token), ("method", &method)],
-    )
-    .await?;
-    let msg = json["message"].as_str().unwrap_or("");
-
-    match classify_response(&json) {
-        Ok(()) => Ok(YemotMfaResult {
-            success: true,
-            message: "קוד אימות נשלח בהצלחה".to_string(),
-            new_token: None,
-        }),
-        Err(_) => Ok(YemotMfaResult {
-            success: false,
-            message: if msg.is_empty() {
-                "שליחת קוד אימות נכשלה".to_string()
-            } else {
-                msg.to_string()
-            },
-            new_token: None,
-        }),
-    }
-}
-
-#[tauri::command]
-pub async fn verify_yemot_mfa(
-    token: String,
-    mfa_token: String,
-    code: String,
-) -> Result<YemotMfaResult, String> {
-    let json = yemot_post(
-        "VerifyMfaCode",
-        Some(token.trim()),
-        &[("mfaToken", &mfa_token), ("code", &code)],
-    )
-    .await?;
-    let msg = json["message"].as_str().unwrap_or("");
-
-    match classify_response(&json) {
-        Ok(()) => {
-            let updated_token = json["token"].as_str().unwrap_or(&token).to_string();
-            Ok(YemotMfaResult {
-                success: true,
-                message: "אימות הצליח!".to_string(),
-                new_token: Some(updated_token),
-            })
-        }
-        Err(_) => Ok(YemotMfaResult {
-            success: false,
-            message: if msg.is_empty() {
-                "קוד אימות שגוי".to_string()
-            } else {
-                msg.to_string()
-            },
-            new_token: None,
-        }),
-    }
-}
-
-#[tauri::command]
-pub async fn execute_yemot_action(
-    token: String,
-    path: String,
-    key: String,
-    value: String,
-) -> Result<YemotActionResult, String> {
-    let client = YemotClient::new(token);
-    match client
-        .update_extension(&path, &[(key.clone(), value.clone())])
-        .await
-    {
-        Ok(outcomes) => {
-            let o = outcomes.into_iter().next().ok_or("לא התקבלה תוצאה")?;
-            let unverified = o.note.as_deref() == Some(NOTE_UNVERIFIED);
-            Ok(YemotActionResult {
-                success: o.applied || unverified,
-                path,
-                key,
-                value,
-                message: if o.applied {
-                    "עודכן בהצלחה במערכת ימות המשיח".to_string()
-                } else if unverified {
-                    "העדכון נשלח אך לא אומת".to_string()
-                } else {
-                    format!(
-                        "העדכון לא הוחל: {}",
-                        o.note.unwrap_or_else(|| "סיבה לא ידועה".to_string())
-                    )
-                },
-            })
-        }
-        Err(e) => Ok(YemotActionResult {
-            success: false,
-            path,
-            key,
-            value,
-            message: render_error(&e),
-        }),
-    }
-}
-
 /// Apply several parameters to one extension in a single API request.
 #[tauri::command]
 pub async fn execute_yemot_actions(
@@ -1398,29 +1271,6 @@ pub async fn execute_yemot_actions(
             verified: false,
         }),
     }
-}
-
-/// Read an extension's `ext.ini` for the UI diff preview.
-#[tauri::command]
-pub async fn read_extension_config(token: String, path: String) -> Result<ExtReadDto, String> {
-    let client = YemotClient::new(token);
-    let canon = canon_ext(&path).map_err(|e| render_error(&e))?;
-    let read = client
-        .get_ext_ini(&canon)
-        .await
-        .map_err(|e| render_error(&e))?;
-    Ok(ExtReadDto {
-        exists: read.exists,
-        path: display_path(&canon),
-        pairs: read
-            .ini
-            .pairs()
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect(),
-        size: read.size,
-        mtime: read.mtime,
-    })
 }
 
 /// Login with system number + password. Returns a token; indicates whether
@@ -1468,9 +1318,16 @@ pub async fn login_yemot(username: String, password: String) -> Result<YemotLogi
         });
     }
 
-    // Check global MFA status for this session
-    let mfa_json = yemot_post("MFASession", Some(&token), &[("action", "isPass")]).await?;
-    let is_pass = mfa_json["isPass"].as_bool().unwrap_or(false);
+    // Check global MFA status for this session. A failure here must NOT throw
+    // the token away: the login itself succeeded, and the caller can still use
+    // the token (the MFA screen is the safe assumption when the probe failed).
+    let is_pass = match yemot_post("MFASession", Some(&token), &[("action", "isPass")]).await {
+        Ok(mfa_json) => mfa_json["isPass"].as_bool().unwrap_or(false),
+        Err(e) => {
+            eprintln!("login_yemot: MFASession probe failed: {}", e);
+            false
+        }
+    };
 
     Ok(YemotLoginResult {
         success: true,
@@ -1615,6 +1472,9 @@ pub async fn validate_mfa_code(token: String, code: String) -> Result<YemotSimpl
 /// Logout (invalidate the token) — performed locally, never via the script.
 #[tauri::command]
 pub async fn logout_yemot(token: String) -> Result<YemotSimpleResult, String> {
+    // Undo records hold an authenticated client each; none of them may outlive
+    // the session the user just ended.
+    crate::agent::runner::clear_write_state().await;
     let json = yemot_post("Logout", Some(token.trim()), &[]).await?;
     match classify_response(&json) {
         Ok(()) => Ok(YemotSimpleResult {

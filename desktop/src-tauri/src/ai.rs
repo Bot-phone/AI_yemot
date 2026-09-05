@@ -12,6 +12,7 @@
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::prompt;
@@ -59,24 +60,29 @@ async fn send_to_script(payload: AIRequestPayload) -> Result<AIResponsePayload, 
     // SECURITY: the Yemot token is never sent to the script — only the AI
     // prompt (and optional personal API key) leave this machine. All Yemot
     // actions are executed locally by this app.
-    let mut query_params: Vec<(&str, String)> = Vec::new();
-    query_params.push(("text", payload.prompt.clone()));
-
+    //
+    // POST with a JSON body, not GET: the personal API key and the whole prompt
+    // would otherwise sit in the query string of every proxy and access log on
+    // the way. `doPost` in gas/ai_yemot.gs reads `e.postData.contents` as JSON
+    // and falls back to `e.parameter`, so the field names are the same ones the
+    // GET used.
+    let mut body = serde_json::Map::new();
+    body.insert("text".to_string(), json!(payload.prompt));
     if payload.model.to_lowercase() == "pro" {
-        query_params.push(("model", "pro".to_string()));
+        body.insert("model".to_string(), json!("pro"));
     }
     if !payload.api_key.trim().is_empty() {
-        query_params.push(("key", payload.api_key.clone()));
+        body.insert("key".to_string(), json!(payload.api_key));
     }
     // Logout is handled locally (logout_yemot command), never by the script.
     if payload.is_preview {
-        query_params.push(("Fullanswer", "yes".to_string()));
+        body.insert("Fullanswer".to_string(), json!("yes"));
     }
 
     let request = http_ai()
-        .get(&payload.script_url)
-        .query(&query_params)
+        .post(&payload.script_url)
         .header("Accept", "application/json, text/plain, */*")
+        .json(&Value::Object(body))
         .send();
 
     let res = tokio::time::timeout(SCRIPT_TIMEOUT, request)

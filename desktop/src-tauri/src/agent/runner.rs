@@ -237,14 +237,26 @@ pub async fn start_agent_run(
     };
 
     tauri::async_runtime::spawn(async move {
-        run_loop(ctx, provider).await;
         // The handle is NOT removed: approval arrives after `agent:finished`
         // and still needs it. Marking it finished frees the slot; the next run
-        // evicts it.
-        finished.store(true, Ordering::SeqCst);
+        // evicts it. The flag is set from `Drop`, so a panic (or a dropped
+        // task) inside `run_loop` cannot leave the slot occupied forever.
+        let _done = FinishGuard(finished);
+        run_loop(ctx, provider).await;
     });
 
     Ok(AgentRunStarted { run_id })
+}
+
+/// Marks a run finished when the loop's task ends — including when it panics or
+/// the task is dropped mid-await. Without it one panic would reject every later
+/// run with "ריצה אחרת פעילה כרגע" until the app restarts.
+struct FinishGuard(Arc<AtomicBool>);
+
+impl Drop for FinishGuard {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
 }
 
 #[tauri::command]
@@ -258,6 +270,10 @@ pub async fn cancel_agent_run(
         Some(h) if h.is_finished() => Ok(()),
         Some(h) => {
             h.cancel.cancel();
+            // Free the slot immediately: a run wedged inside a call that does
+            // not observe the token must never block the next one. The handle
+            // itself stays, so its proposed actions remain approvable.
+            h.finished.store(true, Ordering::SeqCst);
             Ok(())
         }
         None => Err("הריצה כבר הסתיימה".to_string()),
@@ -283,7 +299,17 @@ pub struct UndoRecord {
     pub params: Vec<(String, Option<String>)>,
     /// Previous file contents (`upload_text_file`); `None` = no file existed.
     pub contents: Option<String>,
+    /// Fingerprint of the server state right *after* the apply. An undo that
+    /// finds something else would overwrite whatever changed since.
+    /// `None` = it could not be computed, so the undo goes ahead unchecked.
+    #[serde(skip)]
+    pub post_hash: Option<String>,
 }
+
+/// Refusal messages, shared by the apply and undo paths.
+const STALE_MSG: &str = "הקובץ השתנה בשרת מאז ההצעה, הרץ שוב";
+const UNVERIFIABLE_MSG: &str = "לא ניתן לאמת את מצב הקובץ בשרת, נסה שוב";
+const UNDO_STALE_MSG: &str = "הקובץ השתנה מאז הביצוע, לא ניתן לבטל אוטומטית";
 
 struct RunWriteState {
     applied: HashSet<String>,
@@ -297,9 +323,36 @@ static WRITE_STATE: std::sync::OnceLock<Mutex<HashMap<String, RunWriteState>>> =
 
 /// How long a finished run keeps its undo records.
 const UNDO_RETENTION: Duration = Duration::from_secs(60 * 60);
+/// Hard cap on retained runs. Each entry holds a live `YemotClient` (and so a
+/// token), so age alone is not enough of a bound.
+const MAX_WRITE_STATES: usize = 50;
 
 fn write_state() -> &'static Mutex<HashMap<String, RunWriteState>> {
     WRITE_STATE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Drop every retained run's write state (undo records *and* the Yemot clients
+/// they hold). Called on logout so no live token outlives the session.
+pub async fn clear_write_state() {
+    write_state().lock().await.clear();
+}
+
+/// Age out old entries, then trim the oldest until at most
+/// `MAX_WRITE_STATES` remain.
+fn prune(map: &mut HashMap<String, RunWriteState>) {
+    map.retain(|_, s| s.at.elapsed() < UNDO_RETENTION);
+    while map.len() > MAX_WRITE_STATES {
+        let oldest = map
+            .iter()
+            .max_by_key(|(_, s)| s.at.elapsed())
+            .map(|(k, _)| k.clone());
+        match oldest {
+            Some(k) => {
+                map.remove(&k);
+            }
+            None => break,
+        }
+    }
 }
 
 /// Ids of `wanted` that were already applied in this run, and the ids that are
@@ -307,7 +360,7 @@ fn write_state() -> &'static Mutex<HashMap<String, RunWriteState>> {
 /// "בצע" cannot both get through).
 async fn claim_ids(run_id: &str, client: &Arc<YemotClient>, wanted: &[String]) -> HashSet<String> {
     let mut map = write_state().lock().await;
-    map.retain(|_, s| s.at.elapsed() < UNDO_RETENTION);
+    prune(&mut map);
     let state = map.entry(run_id.to_string()).or_insert_with(|| RunWriteState {
         applied: HashSet::new(),
         undo: HashMap::new(),
@@ -375,11 +428,32 @@ pub async fn approve_actions(
         .cloned()
         .collect();
 
-    let (mut results, undo, refused) = apply_actions(&client, &fresh).await;
+    let outcome = apply_actions(&client, &fresh).await;
+    let ApplyOutcome {
+        mut results,
+        undo,
+        refused,
+        rehashed,
+    } = outcome;
     record_undo(&run_id, undo).await;
     if !refused.is_empty() {
         release_ids(&run_id, &refused).await;
     }
+
+    // Approving one action at a time must keep working: every proposal still
+    // pending on a path just written holds the *pre-write* snapshot, and would
+    // fail the stale check on its own approval. Re-stamp them with what the
+    // server holds now.
+    if !rehashed.is_empty() {
+        let applied: HashSet<&String> = fresh.iter().map(|a| &a.id).collect();
+        let runs = registry.runs.lock().await;
+        if let Some(handle) = runs.get(&run_id) {
+            let mut pending = handle.proposed.lock().await;
+            let done: HashSet<String> = applied.into_iter().cloned().collect();
+            apply_rehashes(&mut pending, &done, &rehashed);
+        }
+    }
+
     for id in already {
         results.push(ActionApplyResult {
             action_id: id,
@@ -416,6 +490,44 @@ pub async fn undo_action(run_id: String, action_id: String) -> Result<ActionAppl
             .ok_or_else(|| "לא נמצאה פעולה לביטול".to_string())?;
         (state.client.clone(), record)
     };
+
+    // An undo restores the *whole* previous state, so it is only safe while the
+    // server still holds exactly what the apply left behind. A later run, the
+    // web UI or another session may have changed it since.
+    if let Some(expected) = record.post_hash.as_deref() {
+        let current = if record.kind == "upload_text_file" {
+            client
+                .get_text_file(&record.canon_path)
+                .await
+                .map(|f| yemot::content_hash(f.exists, &f.contents))
+        } else {
+            client
+                .get_ext_ini_fresh(&record.canon_path)
+                .await
+                .map(|r| r.snapshot_hash())
+        };
+        match current {
+            Ok(now) if now != expected => {
+                return Ok(ActionApplyResult {
+                    action_id,
+                    ok: false,
+                    message: UNDO_STALE_MSG.to_string(),
+                    params: Vec::new(),
+                    undo: None,
+                })
+            }
+            Ok(_) => {}
+            Err(_) => {
+                return Ok(ActionApplyResult {
+                    action_id,
+                    ok: false,
+                    message: UNVERIFIABLE_MSG.to_string(),
+                    params: Vec::new(),
+                    undo: None,
+                })
+            }
+        }
+    }
 
     let result = if record.kind == "upload_text_file" {
         match record.contents.clone() {
@@ -516,15 +628,40 @@ fn undo_params_of(a: &ProposedAction) -> Vec<(String, Option<String>)> {
         .collect()
 }
 
+/// What one `apply_actions` call produced.
+struct ApplyOutcome {
+    results: Vec<ActionApplyResult>,
+    /// Undo records of what actually got written.
+    undo: Vec<UndoRecord>,
+    /// Ids refused before touching the server, so they can be approved again.
+    refused: Vec<String>,
+    /// `(kind, canon_path, fresh hash)` for every path this call wrote — the
+    /// new baseline for proposals on that path that are still pending.
+    rehashed: Vec<(String, String, String)>,
+}
+
+/// Re-stamp the still-pending proposals on a path that was just written.
+/// Actions in `done` were part of this apply and keep their own record.
+fn apply_rehashes(
+    pending: &mut [ProposedAction],
+    done: &HashSet<String>,
+    rehashed: &[(String, String, String)],
+) {
+    for a in pending.iter_mut() {
+        if done.contains(&a.id) {
+            continue;
+        }
+        if let Some((_, _, hash)) = rehashed
+            .iter()
+            .find(|(kind, path, _)| kind == &a.kind && path == &a.canon_path)
+        {
+            a.snapshot_hash = Some(hash.clone());
+        }
+    }
+}
+
 /// Group by extension so each path costs exactly one `UpdateExtension`.
-///
-/// Returns the per-action results, the undo records of what actually got
-/// written, and the ids that were refused before touching the server (so the
-/// caller can let them be approved again).
-async fn apply_actions(
-    client: &YemotClient,
-    actions: &[ProposedAction],
-) -> (Vec<ActionApplyResult>, Vec<UndoRecord>, Vec<String>) {
+async fn apply_actions(client: &YemotClient, actions: &[ProposedAction]) -> ApplyOutcome {
     // Preserve first-seen path order; last value wins per key.
     let mut order: Vec<String> = Vec::new();
     let mut grouped: HashMap<String, Vec<(String, String)>> = HashMap::new();
@@ -546,7 +683,11 @@ async fn apply_actions(
     // If the file changed on the server since (another session, the web UI, an
     // earlier approval), the merge the user approved is no longer the merge
     // that would happen — refuse instead of writing over the change.
+    //
+    // The check fails CLOSED: a read that errors leaves the current state
+    // unknown, and writing blind is exactly what this guard exists to prevent.
     let mut stale: HashSet<String> = HashSet::new();
+    let mut unverifiable: HashSet<String> = HashSet::new();
     for path in &order {
         let expected: Vec<&String> = actions
             .iter()
@@ -556,17 +697,26 @@ async fn apply_actions(
         if expected.is_empty() {
             continue;
         }
-        if let Ok(now) = client.get_ext_ini_fresh(path).await {
-            let current = now.snapshot_hash();
-            if expected.iter().any(|h| **h != current) {
-                stale.insert(path.clone());
+        match client.get_ext_ini_fresh(path).await {
+            Ok(now) => {
+                let current = now.snapshot_hash();
+                if expected.iter().any(|h| **h != current) {
+                    stale.insert(path.clone());
+                }
+            }
+            Err(_) => {
+                unverifiable.insert(path.clone());
             }
         }
     }
 
     let mut per_path: HashMap<String, Result<Vec<ParamOutcome>, String>> = HashMap::new();
+    let mut rehashed: Vec<(String, String, String)> = Vec::new();
+    // The state each written path was left in — the baseline an undo compares
+    // against.
+    let mut post_hash: HashMap<String, String> = HashMap::new();
     for path in &order {
-        if stale.contains(path) {
+        if stale.contains(path) || unverifiable.contains(path) {
             continue;
         }
         let params = grouped.get(path).cloned().unwrap_or_default();
@@ -574,7 +724,15 @@ async fn apply_actions(
             .update_extension(path, &params)
             .await
             .map_err(|e| yemot::render_error(&e));
+        let wrote = res.as_ref().map(|o| o.iter().any(|p| p.applied)).unwrap_or(false);
         per_path.insert(path.clone(), res);
+        if wrote {
+            if let Ok(now) = client.get_ext_ini_fresh(path).await {
+                let h = now.snapshot_hash();
+                post_hash.insert(path.clone(), h.clone());
+                rehashed.push(("set_extension_params".to_string(), path.clone(), h));
+            }
+        }
     }
 
     let mut out = Vec::new();
@@ -582,10 +740,30 @@ async fn apply_actions(
     let mut refused = Vec::new();
     for a in actions {
         if a.kind == "upload_text_file" {
+            // The same stale guard the extension writes get. `upload_text_file`
+            // replaces the whole file, so a change since the proposal would be
+            // lost silently.
+            if let Some(expected) = a.snapshot_hash.as_deref() {
+                match client.get_text_file(&a.canon_path).await {
+                    Ok(f) if yemot::content_hash(f.exists, &f.contents) != expected => {
+                        refused.push(a.id.clone());
+                        out.push(refusal(a, STALE_MSG));
+                        continue;
+                    }
+                    Ok(_) => {}
+                    Err(_) => {
+                        refused.push(a.id.clone());
+                        out.push(refusal(a, UNVERIFIABLE_MSG));
+                        continue;
+                    }
+                }
+            }
             let contents = a.contents.clone().unwrap_or_default();
             let r = client.upload_text_file(&a.canon_path, &contents).await;
             out.push(match r {
                 Ok(previous) => {
+                    let after = yemot::content_hash(true, &contents);
+                    rehashed.push((a.kind.clone(), a.canon_path.clone(), after.clone()));
                     let record = UndoRecord {
                         action_id: a.id.clone(),
                         kind: a.kind.clone(),
@@ -595,6 +773,7 @@ async fn apply_actions(
                         // What the server had a moment ago beats what the
                         // proposal saw; fall back to the proposal's snapshot.
                         contents: previous.or_else(|| a.previous.clone()),
+                        post_hash: Some(after),
                     };
                     let undo_json = serde_json::to_value(&record).ok();
                     undo.push(record);
@@ -620,15 +799,15 @@ async fn apply_actions(
             continue;
         }
 
+        if unverifiable.contains(&a.canon_path) {
+            refused.push(a.id.clone());
+            out.push(refusal(a, UNVERIFIABLE_MSG));
+            continue;
+        }
+
         if stale.contains(&a.canon_path) {
             refused.push(a.id.clone());
-            out.push(ActionApplyResult {
-                action_id: a.id.clone(),
-                ok: false,
-                message: "הקובץ השתנה בשרת מאז ההצעה, הרץ שוב".to_string(),
-                params: Vec::new(),
-                undo: None,
-            });
+            out.push(refusal(a, STALE_MSG));
             continue;
         }
 
@@ -649,6 +828,7 @@ async fn apply_actions(
                         canon_path: a.canon_path.clone(),
                         params: undo_params_of(a),
                         contents: None,
+                        post_hash: post_hash.get(&a.canon_path).cloned(),
                     };
                     undo_json = serde_json::to_value(&record).ok();
                     undo.push(record);
@@ -675,17 +855,27 @@ async fn apply_actions(
             }
             None => {
                 refused.push(a.id.clone());
-                out.push(ActionApplyResult {
-                    action_id: a.id.clone(),
-                    ok: false,
-                    message: "הפעולה לא נמצאה".to_string(),
-                    params: Vec::new(),
-                    undo: None,
-                });
+                out.push(refusal(a, "הפעולה לא נמצאה"));
             }
         }
     }
-    (out, undo, refused)
+    ApplyOutcome {
+        results: out,
+        undo,
+        refused,
+        rehashed,
+    }
+}
+
+/// A "nothing was written" result for one action.
+fn refusal(a: &ProposedAction, message: &str) -> ActionApplyResult {
+    ActionApplyResult {
+        action_id: a.id.clone(),
+        ok: false,
+        message: message.to_string(),
+        params: Vec::new(),
+        undo: None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1486,6 +1676,7 @@ mod tests {
                 canon_path: "ivr2:/3".into(),
                 params: vec![("type".into(), Some("playfile".into()))],
                 contents: None,
+                post_hash: Some("true:beef".into()),
             }],
         )
         .await;
@@ -1495,8 +1686,78 @@ mod tests {
         // the canonical path stays internal, like everywhere else
         let v = serde_json::to_value(&state.undo["a_1"]).unwrap();
         assert!(v.get("canon_path").is_none());
+        assert!(v.get("post_hash").is_none());
         drop(map);
         write_state().lock().await.remove(&run);
+    }
+
+    /// Two proposals on the same extension: approving them one at a time must
+    /// work. The second one carried the pre-write snapshot and would otherwise
+    /// be refused as stale by the write the first one just made.
+    #[test]
+    fn a_written_path_rebaselines_its_still_pending_proposals() {
+        let mut first = action("a_1");
+        first.snapshot_hash = Some("true:old".into());
+        let mut second = action("a_2");
+        second.snapshot_hash = Some("true:old".into());
+        // same run, different extension — untouched
+        let mut other = action("a_3");
+        other.canon_path = "ivr2:/9".into();
+        other.snapshot_hash = Some("true:old".into());
+        // an upload on a path that happens to share the string is a different
+        // kind of write and keeps its own baseline
+        let mut upload = action("a_4");
+        upload.kind = "upload_text_file".into();
+        upload.snapshot_hash = Some("true:old".into());
+
+        let mut pending = vec![first, second, other, upload];
+        let done = HashSet::from(["a_1".to_string()]);
+        let rehashed = vec![(
+            "set_extension_params".to_string(),
+            "ivr2:/3".to_string(),
+            "true:new".to_string(),
+        )];
+        apply_rehashes(&mut pending, &done, &rehashed);
+
+        // the applied action keeps what it had — its undo record is the record
+        assert_eq!(pending[0].snapshot_hash.as_deref(), Some("true:old"));
+        // the still-pending sibling now matches the server
+        assert_eq!(pending[1].snapshot_hash.as_deref(), Some("true:new"));
+        assert_eq!(pending[2].snapshot_hash.as_deref(), Some("true:old"));
+        assert_eq!(pending[3].snapshot_hash.as_deref(), Some("true:old"));
+    }
+
+    /// Undo state holds a live Yemot client per run, so it is bounded by count
+    /// as well as by age — the global map is never allowed to just grow.
+    #[test]
+    fn write_state_is_bounded_by_count_and_age() {
+        let mut map: HashMap<String, RunWriteState> = HashMap::new();
+        for i in 0..(MAX_WRITE_STATES + 10) {
+            map.insert(
+                format!("r_{}", i),
+                RunWriteState {
+                    applied: HashSet::new(),
+                    undo: HashMap::new(),
+                    client: Arc::new(YemotClient::new("t")),
+                    at: Instant::now(),
+                },
+            );
+        }
+        prune(&mut map);
+        assert_eq!(map.len(), MAX_WRITE_STATES);
+
+        // an entry past the retention window goes regardless of the count
+        map.insert(
+            "r_old".to_string(),
+            RunWriteState {
+                applied: HashSet::new(),
+                undo: HashMap::new(),
+                client: Arc::new(YemotClient::new("t")),
+                at: Instant::now() - UNDO_RETENTION - Duration::from_secs(1),
+            },
+        );
+        prune(&mut map);
+        assert!(!map.contains_key("r_old"));
     }
 
     #[test]

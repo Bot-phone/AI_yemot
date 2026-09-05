@@ -49,6 +49,14 @@ pub fn secret_get(name: &str) -> Result<Option<String>, String> {
     match entry(name)?.get_password() {
         Ok(v) => Ok(Some(v)),
         Err(keyring::Error::NoEntry) => Ok(None),
+        // A locked / missing / unsupported credential store is not a failure of
+        // *this* read: the app must still start, just without a stored secret.
+        // On write the same conditions stay errors — silently losing a secret
+        // the user asked to save would be worse.
+        Err(e @ (keyring::Error::NoStorageAccess(_) | keyring::Error::PlatformFailure(_))) => {
+            eprintln!("secret_get({}): מאגר הסודות אינו זמין: {}", name, e);
+            Ok(None)
+        }
         Err(e) => Err(format!("קריאת הסוד נכשלה: {}", e)),
     }
 }

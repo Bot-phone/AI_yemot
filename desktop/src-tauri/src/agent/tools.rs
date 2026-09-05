@@ -666,13 +666,19 @@ async fn upload_text_file(ctx: &ToolCtx, input: &Value, tool_use_id: &str) -> To
     }
 
     // Read the file first so the approval dialog can show a real before/after
-    // and `undo_action` has something to restore.
+    // and `undo_action` has something to restore. A *failed* read is not the
+    // same as "no such file": folding the two together would show the user a
+    // low-risk "new file" for a write that in fact destroys existing content.
     let previous = match ctx.client.get_text_file(&canon).await {
         Ok(f) if f.exists => Some(f.contents),
         Ok(_) => None,
         Err(e) => {
             ctx.note_yemot_error(&e).await;
-            None
+            return ToolOutcome::err(format!(
+                "READ_FAILED: לא ניתן לקרוא את {} לפני הכתיבה, ולכן אי אפשר להציע החלפה של הקובץ. {}",
+                canon,
+                yemot::render_error(&e)
+            ));
         }
     };
     let exists = previous.is_some();
@@ -700,8 +706,13 @@ async fn upload_text_file(ctx: &ToolCtx, input: &Value, tool_use_id: &str) -> To
             kind: if exists { "changed" } else { "new" }.to_string(),
         }],
         warnings: Vec::new(),
+        // Same stale guard the extension writes get: the approval re-reads the
+        // file and refuses if the server no longer holds what the diff showed.
+        snapshot_hash: Some(yemot::content_hash(
+            exists,
+            previous.as_deref().unwrap_or(""),
+        )),
         previous,
-        snapshot_hash: None,
     };
     events::action_proposed(&ctx.app, &ctx.run_id, &action);
     ctx.proposed.lock().await.push(action);

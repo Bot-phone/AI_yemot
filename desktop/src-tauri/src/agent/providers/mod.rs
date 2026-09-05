@@ -215,7 +215,7 @@ where
                     ))
                 }
                 Ok(None) => self.eof = true,
-                Ok(Some(Err(e))) => return Err(classify_reqwest(&e)),
+                Ok(Some(Err(e))) => return Err(classify_reqwest(e)),
                 Ok(Some(Ok(chunk))) => self.buf.extend_from_slice(chunk.as_ref()),
             }
         }
@@ -321,8 +321,12 @@ pub(crate) fn classify_status(status: u16, retry_after: Option<u64>, body: &str)
 
 /// Transport failures are always retryable: a timeout, a reset connection and
 /// a DNS hiccup are the same class of problem from the loop's point of view.
-pub(crate) fn classify_reqwest(e: &reqwest::Error) -> ProviderError {
-    ProviderError::Transient(e.to_string())
+///
+/// The error is taken **by value** so `without_url` can strip the request URL:
+/// a provider URL may carry credentials in its query string, and this string
+/// ends up in the UI and in logs.
+pub(crate) fn classify_reqwest(e: reqwest::Error) -> ProviderError {
+    ProviderError::Transient(e.without_url().to_string())
 }
 
 /// The provider's own error message, trimmed to something loggable.
@@ -390,6 +394,27 @@ mod tests {
         assert_eq!(classify_status(529, None, "{}"), ProviderError::Overloaded);
         assert!(classify_status(503, None, "{}").retryable());
         assert!(!classify_status(400, None, "{}").retryable());
+    }
+
+    /// A transport error must never quote the request URL: the URL can carry
+    /// credentials (a `?key=` query, a signed path) straight into the UI.
+    #[tokio::test]
+    async fn a_transport_error_never_quotes_the_url() {
+        // port 1 on loopback refuses immediately — no network needed.
+        let e = http_ai()
+            .get("http://127.0.0.1:1/v1beta/models/m:generateContent?key=SECRETKEY")
+            .send()
+            .await
+            .expect_err("a refused connection is expected here");
+        let classified = classify_reqwest(e);
+        let msg = match &classified {
+            ProviderError::Transient(m) => m.clone(),
+            other => panic!("expected Transient, got {:?}", other),
+        };
+        assert!(!msg.contains("SECRETKEY"), "the key leaked: {}", msg);
+        assert!(!msg.contains("127.0.0.1"), "the url leaked: {}", msg);
+        assert!(!msg.contains("generateContent"), "the url leaked: {}", msg);
+        assert!(classified.retryable());
     }
 
     #[test]
