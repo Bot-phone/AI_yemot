@@ -31,11 +31,16 @@
 
 <div class="flex items-stretch gap-0.5" style="padding-inline-start: {depth * 0.85}rem">
   {#if hasChildren}
+    <!-- Decorative twisty: the row itself is the treeitem and carries the
+         expanded state, and the tree's arrow keys already toggle it, so this
+         button is kept out of the tab order and out of the a11y tree rather
+         than announcing a second, competing control for the same row. -->
     <button
       type="button"
       onclick={() => onToggle(node.path)}
-      aria-label={isOpen ? t("tree_collapse") : t("tree_expand")}
-      aria-expanded={isOpen}
+      tabindex="-1"
+      aria-hidden="true"
+      title={isOpen ? t("tree_collapse") : t("tree_expand")}
       class="w-5 shrink-0 text-xs text-slate-500 hover:text-slate-800 rounded focus-visible:outline-2 focus-visible:outline-blue-600"
     >
       <span class="inline-block tree-caret {isOpen ? 'tree-caret-open' : ''}">▸</span>
@@ -46,11 +51,14 @@
 
   <button
     type="button"
+    role="treeitem"
     data-tree-row="1"
     data-path={node.path}
     data-has-children={hasChildren ? "true" : "false"}
     onclick={() => onSelect(node.path)}
-    aria-current={isSelected ? "true" : undefined}
+    aria-expanded={hasChildren ? isOpen : undefined}
+    aria-selected={isSelected}
+    aria-level={depth + 1}
     class="flex-1 min-w-0 text-start px-2 py-1 rounded-lg text-xs transition
       focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-blue-600
       {isSelected
@@ -68,9 +76,13 @@
 </div>
 
 {#if hasChildren && isOpen}
-  {#each children as child (child.path)}
-    <Self node={child} depth={depth + 1} {selectedPath} {expanded} {onSelect} {onToggle} />
-  {/each}
+  <!-- `role="group"` is what makes the rows below belong to the row above them:
+       without it every treeitem looks like a sibling at the top level. -->
+  <div role="group">
+    {#each children as child (child.path)}
+      <Self node={child} depth={depth + 1} {selectedPath} {expanded} {onSelect} {onToggle} />
+    {/each}
+  </div>
 {/if}
 
 <style>

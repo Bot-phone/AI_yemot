@@ -95,7 +95,15 @@
   {:else}
     <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
       <dt class="font-semibold text-slate-600">{t("inspector_path")}</dt>
-      <dd class="font-mono text-slate-800 break-all"><bdi dir="ltr">{detail.path}</bdi></dd>
+      <dd class="font-mono text-slate-800 break-all">
+        <!-- The canonical path is what the tools take; the display path ("/2")
+             is what the user sees on the line and in the tree, so the row shows
+             both instead of only the internal spelling. -->
+        <bdi dir="ltr">{detail.path}</bdi>
+        {#if detail.display && detail.display !== detail.path}
+          <span class="text-slate-500"><bdi dir="ltr">({detail.display})</bdi></span>
+        {/if}
+      </dd>
       <dt class="font-semibold text-slate-600">{t("inspector_type")}</dt>
       <dd class="text-slate-800">{detail.ext_type || "—"}</dd>
     </dl>
@@ -118,8 +126,10 @@
                 <th class="p-1.5 {rtl ? 'text-right' : 'text-left'} font-semibold">
                   {t("diff_key")}
                 </th>
+                <!-- The inspector shows what the extension *is*, not what a
+                     change would make it: "ערך", never "ערך חדש". -->
                 <th class="p-1.5 {rtl ? 'text-right' : 'text-left'} font-semibold">
-                  {t("diff_after")}
+                  {t("value_label")}
                 </th>
                 <th class="p-1.5 w-8"><span class="sr-only">{t("copy_value")}</span></th>
               </tr>

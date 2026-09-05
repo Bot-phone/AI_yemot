@@ -261,3 +261,16 @@ body {
   animation: target-pulse 2.5s ease-out;
   border-radius: 0.35rem;
 }
+
+/* A long agent run keeps several of these moving at once — the status-bar
+   spinner, the submit button, the tree/inspector skeleton rows. Honour the OS
+   setting: they keep their layout and their meaning, they just stop moving. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-spin,
+  .animate-pulse {
+    animation: none !important;
+  }
+  .target-highlight {
+    animation: none;
+  }
+}
