@@ -21,6 +21,7 @@ use crate::yemot::{self, ExtRead, ExtSource, YemotClient, YemotError};
 
 use super::events::{self, ActionParam, DiffRowDto, ProposedAction};
 use super::providers::openai::INVALID_ARGUMENTS_KEY;
+use super::runner::Attachment;
 use super::types::{ToolKind, ToolSpec};
 
 /// Backstop cap for a single tool result. Per-tool caps ([`cap_for`]) are much
@@ -163,7 +164,7 @@ pub fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "upload_text_file",
-            description: "החלף לחלוטין תוכן של קובץ טקסט בנתיב מלא. הקובץ הקודם נדרס, לכן השתמש בזה רק לקבצי רשימות או תוכן שנוצר מחדש, ולא לעריכת ext.ini של שלוחה. גם כאן הפעולה נרשמת לאישור המשתמש ואינה מתבצעת מיד.",
+            description: "החלף לחלוטין תוכן של קובץ טקסט בנתיב מלא. הקובץ הקודם נדרס, לכן השתמש בזה רק לקבצי רשימות או תוכן שנוצר מחדש, ולא לעריכת ext.ini של שלוחה. קובץ בשם NNN.tts, למשל 000.tts, הוא קובץ טקסט שהמערכת מקריאה למתקשר בהקראה ממוחשבת (text to speech) במקום הקלטה. גם כאן הפעולה נרשמת לאישור המשתמש ואינה מתבצעת מיד.",
             input_schema: obj(
                 json!({
                     "path": { "type": "string" },
@@ -171,6 +172,19 @@ pub fn tool_specs() -> Vec<ToolSpec> {
                     "reason": { "type": "string" }
                 }),
                 &["path", "contents", "reason"],
+            ),
+            kind: ToolKind::Mutating,
+        },
+        ToolSpec {
+            name: "upload_audio_file",
+            description: "העלה קובץ שמע שהמשתמש צירף למשימה אל שלוחה, לפי המזהה שמופיע ברשימת הקבצים המצורפים. נתיב היעד חייב לכלול שם קובץ עם סיומת wav, למשל /3/000.wav, והמערכת ממירה את הקובץ המקורי בעצמה. אין באפשרותך ליצור קבצי שמע חדשים, רק להעלות קובץ שצורף. גם כאן הפעולה נרשמת לאישור המשתמש ואינה מתבצעת מיד.",
+            input_schema: obj(
+                json!({
+                    "dest_path": { "type": "string" },
+                    "attachment_id": { "type": "string" },
+                    "reason": { "type": "string" }
+                }),
+                &["dest_path", "attachment_id", "reason"],
             ),
             kind: ToolKind::Mutating,
         },
@@ -230,6 +244,11 @@ pub struct ToolCtx {
     /// Set when Yemot reports an expired / unverified session, so the run can
     /// stop with `session_expired` instead of looping on failures.
     pub session_error: Arc<Mutex<Option<YemotError>>>,
+    /// Files the user attached to THIS run — the only paths an upload may read.
+    pub attachments: Arc<Vec<Attachment>>,
+    /// `action_id` → the attachment it uploads, filled in when the action is
+    /// proposed and read back by `approve_actions` at apply time.
+    pub audio: Arc<Mutex<HashMap<String, Attachment>>>,
 }
 
 impl ToolCtx {
@@ -309,6 +328,7 @@ pub fn label_for(name: &str, input: &Value) -> String {
         "get_system_info" => "פרטי מערכת".to_string(),
         "set_extension_params" => format!("כתיבת הגדרות: {}", s(input, "path")),
         "upload_text_file" => format!("כתיבת קובץ: {}", s(input, "path")),
+        "upload_audio_file" => format!("העלאת שמע: {}", s(input, "dest_path")),
         other => other.to_string(),
     }
 }
@@ -421,6 +441,7 @@ pub async fn execute_tool(
         },
         "set_extension_params" => set_extension_params(ctx, input, tool_use_id).await,
         "upload_text_file" => upload_text_file(ctx, input, tool_use_id).await,
+        "upload_audio_file" => upload_audio_file(ctx, input, tool_use_id).await,
         _ => ToolOutcome::err("TOOL_NOT_AVAILABLE"),
     };
 
@@ -719,6 +740,144 @@ async fn upload_text_file(ctx: &ToolCtx, input: &Value, tool_use_id: &str) -> To
     ToolOutcome::ok(pending_result(&canon, &["contents".to_string()]))
 }
 
+/// `ivr2:/1/000.wav` → (`ivr2:/1`, `000.wav`).
+fn dir_and_name(canon_file_path: &str) -> (String, String) {
+    match canon_file_path.rsplit_once('/') {
+        Some(("ivr2:", name)) => ("ivr2:/".to_string(), name.to_string()),
+        Some((dir, name)) => (dir.to_string(), name.to_string()),
+        None => ("ivr2:/".to_string(), canon_file_path.to_string()),
+    }
+}
+
+fn kb(bytes: u64) -> String {
+    format!("{} KB", bytes.div_ceil(1024))
+}
+
+/// Shape one audio upload proposal. `existing` is the name the destination
+/// already holds (`None` = nothing there), which is the only thing that decides
+/// the risk and the "this cannot be undone" warning.
+fn audio_action(
+    id: &str,
+    tool_use_id: &str,
+    canon: &str,
+    att: &Attachment,
+    existing: Option<String>,
+    reason: &str,
+) -> ProposedAction {
+    let exists = existing.is_some();
+    ProposedAction {
+        id: id.to_string(),
+        tool_use_id: tool_use_id.to_string(),
+        kind: "upload_audio_file".to_string(),
+        path: canon.to_string(),
+        canon_path: canon.to_string(),
+        params: vec![
+            ActionParam { key: "file".to_string(), value: att.name.clone() },
+            ActionParam { key: "size".to_string(), value: kb(att.size) },
+        ],
+        contents: None,
+        reason: reason.to_string(),
+        risk: if exists { "overwrite" } else { "low" }.to_string(),
+        exists,
+        diff: vec![DiffRowDto {
+            key: "file".to_string(),
+            before: existing,
+            after: att.name.clone(),
+            kind: if exists { "changed" } else { "new" }.to_string(),
+        }],
+        // Audio cannot be restored: Yemot exposes no file delete and the old
+        // recording is gone once the upload lands.
+        warnings: if exists {
+            vec!["לא ניתן לבטל העלאת שמע אוטומטית".to_string()]
+        } else {
+            Vec::new()
+        },
+        previous: None,
+        snapshot_hash: None,
+    }
+}
+
+/// Upload one of the user's attached audio files.
+///
+/// The model never names a local path: it names an id from `[קבצים מצורפים]`,
+/// and the id is resolved against this run's own attachment list. An id that is
+/// not on that list is an error, not a lookup elsewhere.
+async fn upload_audio_file(ctx: &ToolCtx, input: &Value, tool_use_id: &str) -> ToolOutcome {
+    if ctx.attachments.is_empty() {
+        return ToolOutcome::err("אין קבצים מצורפים למשימה");
+    }
+    let id = s(input, "attachment_id");
+    let Some(att) = ctx.attachments.iter().find(|a| a.id == id).cloned() else {
+        let ids: Vec<&str> = ctx.attachments.iter().map(|a| a.id.as_str()).collect();
+        return ToolOutcome::err(format!(
+            "ATTACHMENT_NOT_FOUND: אין קובץ מצורף במזהה {}. המזהים הזמינים: {}",
+            id,
+            ids.join(", ")
+        ));
+    };
+
+    let canon = match yemot::canon_file(&s(input, "dest_path")) {
+        Ok(c) => c,
+        Err(e) => return ToolOutcome::err(yemot::render_error(&e)),
+    };
+    let (dir, name) = dir_and_name(&canon);
+    if !name.to_lowercase().ends_with(".wav") {
+        return ToolOutcome::err(format!(
+            "DEST_MUST_BE_WAV: נתיב היעד חייב להסתיים ב-.wav (המערכת ממירה את {} בעצמה). שלח למשל {}/000.wav",
+            att.name,
+            yemot::display_path(&dir)
+        ));
+    }
+
+    if ctx.auto_apply {
+        let bytes = match std::fs::read(&att.local_path) {
+            Ok(b) => b,
+            Err(_) => {
+                return ToolOutcome::err(format!("לא ניתן לקרוא את הקובץ {} מהמחשב", att.name))
+            }
+        };
+        return match ctx.client.upload_audio_file(&canon, bytes, &att.name).await {
+            Ok(size) => ToolOutcome::ok(format!("upload {} ok bytes={}\n", canon, size)),
+            Err(e) => {
+                ctx.note_yemot_error(&e).await;
+                ToolOutcome::err(yemot::render_error(&e))
+            }
+        };
+    }
+
+    // Does the destination already hold a file of that name? Fails closed: an
+    // unknown answer would show the user a "new file" for what may be an
+    // irreversible overwrite.
+    let existing = match ctx.client.list_files(&dir).await {
+        Ok(files) => files
+            .into_iter()
+            .find(|f| f.name.eq_ignore_ascii_case(&name))
+            .map(|f| f.name),
+        Err(e) => {
+            ctx.note_yemot_error(&e).await;
+            return ToolOutcome::err(format!(
+                "READ_FAILED: לא ניתן לבדוק אם {} כבר קיים, ולכן אי אפשר להציע העלאה. {}",
+                canon,
+                yemot::render_error(&e)
+            ));
+        }
+    };
+    let action = audio_action(
+        &ctx.next_action_id().await,
+        tool_use_id,
+        &canon,
+        &att,
+        existing,
+        &s(input, "reason"),
+    );
+
+    // The bytes stay on disk until the approval; only the mapping is kept.
+    ctx.audio.lock().await.insert(action.id.clone(), att);
+    events::action_proposed(&ctx.app, &ctx.run_id, &action);
+    ctx.proposed.lock().await.push(action);
+    ToolOutcome::ok(pending_result(&canon, &["file".to_string()]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -757,9 +916,90 @@ mod tests {
         }
         let names: Vec<&str> = tool_specs().iter().map(|t| t.name).collect();
         assert!(names.contains(&"list_files"), "new tools must be covered here");
+        assert!(names.contains(&"upload_audio_file"), "new tools must be covered here");
         for t in tool_specs() {
             walk(&t.input_schema);
         }
+    }
+
+    /// The tool list is part of the cached prefix: it must not depend on
+    /// whether this particular run has attachments.
+    #[test]
+    fn the_audio_tool_is_always_present_and_the_list_stays_byte_stable() {
+        let json = |_: ()| {
+            serde_json::to_string(&super::super::providers::anthropic::tools_json(&tool_specs()))
+                .unwrap()
+        };
+        assert_eq!(json(()), json(()));
+        let spec = spec_of("upload_audio_file").expect("always exposed");
+        let props = spec.input_schema["properties"].as_object().unwrap();
+        let mut keys: Vec<&String> = props.keys().collect();
+        keys.sort();
+        assert_eq!(keys, vec!["attachment_id", "dest_path", "reason"]);
+    }
+
+    #[test]
+    fn tts_files_are_explained_in_the_text_upload_description() {
+        let d = spec_of("upload_text_file").unwrap().description;
+        assert!(d.contains(".tts"), "the tts sentence is missing");
+        assert!(d.contains("text to speech"));
+    }
+
+    fn attachment() -> Attachment {
+        Attachment {
+            id: "f1".into(),
+            name: "ברכה.mp3".into(),
+            local_path: "C:/tmp/ברכה.mp3".into(),
+            size: 2_048,
+            mime: "audio/mpeg".into(),
+        }
+    }
+
+    #[test]
+    fn audio_action_is_low_risk_on_a_free_slot_and_overwrite_on_a_taken_one() {
+        let att = attachment();
+        let fresh = audio_action("a_1", "toolu_1", "ivr2:/1/000.wav", &att, None, "ברכה");
+        assert_eq!(fresh.kind, "upload_audio_file");
+        assert_eq!(fresh.risk, "low");
+        assert!(!fresh.exists);
+        assert!(fresh.warnings.is_empty());
+        assert!(fresh.contents.is_none());
+        assert!(fresh.previous.is_none());
+        assert!(fresh.snapshot_hash.is_none());
+        assert_eq!(fresh.diff[0].kind, "new");
+        assert_eq!(fresh.diff[0].before, None);
+        assert_eq!(fresh.diff[0].after, "ברכה.mp3");
+        assert_eq!(fresh.params[0].value, "ברכה.mp3");
+        assert_eq!(fresh.params[1].value, "2 KB");
+
+        let over = audio_action(
+            "a_2",
+            "toolu_2",
+            "ivr2:/1/000.wav",
+            &att,
+            Some("000.wav".to_string()),
+            "החלפה",
+        );
+        assert_eq!(over.risk, "overwrite");
+        assert!(over.exists);
+        assert_eq!(over.diff[0].kind, "changed");
+        assert_eq!(over.diff[0].before.as_deref(), Some("000.wav"));
+        assert_eq!(over.warnings, vec!["לא ניתן לבטל העלאת שמע אוטומטית"]);
+    }
+
+    #[test]
+    fn upload_destination_splits_into_folder_and_name() {
+        assert_eq!(
+            dir_and_name("ivr2:/1/2/000.wav"),
+            ("ivr2:/1/2".to_string(), "000.wav".to_string())
+        );
+        assert_eq!(
+            dir_and_name("ivr2:/000.wav"),
+            ("ivr2:/".to_string(), "000.wav".to_string())
+        );
+        assert_eq!(kb(1), "1 KB");
+        assert_eq!(kb(1024), "1 KB");
+        assert_eq!(kb(1025), "2 KB");
     }
 
     #[test]
@@ -778,10 +1018,12 @@ mod tests {
                 "get_system_info",
                 "set_extension_params",
                 "upload_text_file",
+                "upload_audio_file",
             ]
         );
         assert!(is_mutating("set_extension_params"));
         assert!(is_mutating("upload_text_file"));
+        assert!(is_mutating("upload_audio_file"));
         assert!(!is_mutating("search_knowledge"));
         assert!(!is_mutating("nope"));
     }

@@ -131,6 +131,14 @@ pub struct RunHandle {
     /// registry afterwards: approval happens *after* `agent:finished`, and it
     /// needs both the proposed actions and the authenticated Yemot client.
     pub finished: Arc<AtomicBool>,
+    /// The messages the loop ended with — the starting point of a continuation.
+    /// It lives here and nowhere else: the registry evicts a finished handle as
+    /// soon as the next run claims a slot, so this cannot grow.
+    pub transcript: Arc<Mutex<Vec<Message>>>,
+    /// Files the *user* attached to this run. An `upload_audio_file` action
+    /// resolves its attachment id against this list only — never against
+    /// anything the model wrote.
+    pub audio: Arc<Mutex<HashMap<String, Attachment>>>,
 }
 
 impl RunHandle {
@@ -172,6 +180,101 @@ pub struct AgentRunPayload {
     pub auto_apply: bool,
     #[serde(default)]
     pub include_tree: bool,
+    /// Audio files the user picked for this task. Absent = none.
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
+}
+
+/// One file the user attached to a task. `local_path` stays in Rust: it is the
+/// only source an `upload_audio_file` may read from, and it is never sent to the
+/// model (which sees the id, name, size and mime).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Attachment {
+    pub id: String,
+    pub name: String,
+    pub local_path: String,
+    pub size: u64,
+    pub mime: String,
+}
+
+/// Audio formats Yemot's `UploadFile` converts (`convertAudio=1`).
+pub const AUDIO_EXTS: &[&str] = &["wav", "mp3", "m4a", "ogg", "wma", "aac"];
+
+fn ext_of(name: &str) -> String {
+    name.rsplit_once('.')
+        .map(|(_, e)| e.trim().to_lowercase())
+        .unwrap_or_default()
+}
+
+/// KB, rounded up, so a 300-byte file is not reported as `0 KB`.
+fn size_kb(bytes: u64) -> u64 {
+    bytes.div_ceil(1024)
+}
+
+/// Validate the user's attachments at run start. Fails closed: an attachment
+/// that cannot be checked (missing, not a regular file) is an error, not a
+/// warning — the run would otherwise propose an upload it can never apply.
+pub fn validate_attachments(list: &[Attachment]) -> Result<(), String> {
+    let mut seen: HashSet<&str> = HashSet::new();
+    for a in list {
+        if a.id.trim().is_empty() || !seen.insert(a.id.as_str()) {
+            return Err(format!("מזהה קובץ מצורף כפול או ריק: {}", a.id));
+        }
+        let ext = ext_of(&a.name);
+        if !AUDIO_EXTS.contains(&ext.as_str()) {
+            return Err(format!(
+                "הקובץ {} אינו קובץ שמע נתמך. סוגים נתמכים: {}",
+                a.name,
+                AUDIO_EXTS.join(", ")
+            ));
+        }
+        let mime = a.mime.trim().to_lowercase();
+        if !mime.is_empty() && !mime.starts_with("audio/") {
+            return Err(format!("סוג הקובץ {} אינו שמע: {}", a.name, a.mime));
+        }
+        if a.size > yemot::MAX_UPLOAD_BYTES {
+            return Err(format!(
+                "הקובץ {} גדול מ-{} MB",
+                a.name,
+                yemot::MAX_UPLOAD_BYTES / (1024 * 1024)
+            ));
+        }
+        match std::fs::metadata(&a.local_path) {
+            Ok(m) if !m.is_file() => {
+                return Err(format!("הנתיב של {} אינו קובץ", a.name));
+            }
+            Ok(m) if m.len() > yemot::MAX_UPLOAD_BYTES => {
+                return Err(format!(
+                    "הקובץ {} גדול מ-{} MB",
+                    a.name,
+                    yemot::MAX_UPLOAD_BYTES / (1024 * 1024)
+                ));
+            }
+            Ok(_) => {}
+            Err(_) => return Err(format!("הקובץ {} לא נמצא במחשב", a.name)),
+        }
+    }
+    Ok(())
+}
+
+/// `[קבצים מצורפים]` — the only place the model learns which ids exist.
+/// Empty list = no block at all, so a run without attachments is byte-identical
+/// to one from before this feature.
+pub fn attachments_block(list: &[Attachment]) -> Option<String> {
+    if list.is_empty() {
+        return None;
+    }
+    let mut out = String::from("[קבצים מצורפים]\n");
+    for a in list {
+        out.push_str(&format!(
+            "- {}: {} ({} KB, {})\n",
+            a.id,
+            a.name,
+            size_kb(a.size),
+            a.mime
+        ));
+    }
+    Some(out)
 }
 
 fn new_run_id() -> String {
@@ -198,6 +301,7 @@ pub async fn start_agent_run(
     if payload.yemot_token.trim().is_empty() {
         return Err("נדרשת התחברות למערכת ימות המשיח".to_string());
     }
+    validate_attachments(&payload.attachments)?;
     let provider = providers::build(
         &payload.provider,
         &payload.model,
@@ -206,10 +310,120 @@ pub async fn start_agent_run(
     )?;
     let model = providers::resolve_model(&payload.provider, &payload.model);
 
+    let client = Arc::new(YemotClient::new(payload.yemot_token.clone()));
+    let (ctx, finished) = new_run(&app, &payload, model, client.clone(), registry).await?;
+    let run_id = ctx.run_id.clone();
+
+    let prompt = payload.prompt.clone();
+    let include_tree = payload.include_tree;
+    let attachments = payload.attachments.clone();
+    tauri::async_runtime::spawn(async move {
+        // The handle is NOT removed: approval arrives after `agent:finished`
+        // and still needs it. Marking it finished frees the slot; the next run
+        // evicts it. The flag is set from `Drop`, so a panic (or a dropped
+        // task) inside `run_loop` cannot leave the slot occupied forever.
+        let _done = FinishGuard(finished);
+        let initial = first_messages(&client, &prompt, include_tree, &attachments).await;
+        run_loop(ctx, provider, initial).await;
+    });
+
+    Ok(AgentRunStarted { run_id })
+}
+
+/// Continue a finished task: same conversation, one more instruction.
+///
+/// The system blocks are regenerated (they are built from consts, so they are
+/// byte-identical and the provider's cached prefix still hits) and the parent's
+/// whole transcript is replayed, so nothing is re-read and nothing is re-priced
+/// at full rate. `include_tree` is ignored — the tree is already in there.
+#[tauri::command]
+pub async fn continue_agent_run(
+    app: AppHandle,
+    registry: State<'_, AgentRegistry>,
+    payload: AgentRunPayload,
+    parent_run_id: String,
+) -> Result<AgentRunStarted, String> {
+    if payload.prompt.trim().is_empty() {
+        return Err("לא הוזנה בקשה".to_string());
+    }
+    if payload.yemot_token.trim().is_empty() {
+        return Err("נדרשת התחברות למערכת ימות המשיח".to_string());
+    }
+    validate_attachments(&payload.attachments)?;
+
+    // Everything the parent leaves behind is read here, before the claim below
+    // evicts its handle.
+    let (history, parent_actions) = {
+        let runs = registry.runs.lock().await;
+        let parent = runs
+            .get(&parent_run_id)
+            .ok_or_else(|| "המשימה הקודמת אינה זמינה עוד — התחל משימה חדשה".to_string())?;
+        if !parent.is_finished() {
+            return Err("המשימה הקודמת עדיין רצה".to_string());
+        }
+        let history = parent.transcript.lock().await.clone();
+        let actions = parent.proposed.lock().await.clone();
+        (history, actions)
+    };
+    if history.is_empty() {
+        return Err("אין תמלול למשימה הקודמת — התחל משימה חדשה".to_string());
+    }
+
+    let system = prompt::system_blocks(&payload.provider);
+    if estimate_context(&system, &history) > CONTEXT_HARD_LIMIT {
+        return Err("המשימה ארוכה מדי להמשך, התחל משימה חדשה".to_string());
+    }
+
+    let provider = providers::build(
+        &payload.provider,
+        &payload.model,
+        &payload.api_key,
+        &payload.base_url,
+    )?;
+    let model = providers::resolve_model(&payload.provider, &payload.model);
+
+    let status = {
+        let map = write_state().lock().await;
+        let (applied, undone) = match map.get(&parent_run_id) {
+            Some(s) => (s.applied.clone(), s.undone.clone()),
+            None => (HashSet::new(), HashSet::new()),
+        };
+        status_block(&parent_actions, &applied, &undone)
+    };
+
+    let client = Arc::new(YemotClient::new(payload.yemot_token.clone()));
+    let (ctx, finished) = new_run(&app, &payload, model, client, registry).await?;
+    let run_id = ctx.run_id.clone();
+
+    let mut initial = history;
+    initial.push(Message::user_text(continuation_text(
+        &status,
+        &payload.prompt,
+        &payload.attachments,
+    )));
+
+    tauri::async_runtime::spawn(async move {
+        let _done = FinishGuard(finished);
+        run_loop(ctx, provider, initial).await;
+    });
+
+    Ok(AgentRunStarted { run_id })
+}
+
+/// Register a run and build its context. Shared by a fresh run and a
+/// continuation so the two cannot drift apart.
+async fn new_run(
+    app: &AppHandle,
+    payload: &AgentRunPayload,
+    model: String,
+    client: Arc<YemotClient>,
+    registry: State<'_, AgentRegistry>,
+) -> Result<(RunContext, Arc<AtomicBool>), String> {
     let run_id = new_run_id();
     let cancel = CancellationToken::new();
     let proposed = Arc::new(Mutex::new(Vec::new()));
-    let client = Arc::new(YemotClient::new(payload.yemot_token.clone()));
+    let transcript = Arc::new(Mutex::new(Vec::new()));
+    let audio = Arc::new(Mutex::new(HashMap::new()));
     let finished = Arc::new(AtomicBool::new(false));
     registry
         .claim(
@@ -219,33 +433,95 @@ pub async fn start_agent_run(
                 proposed: proposed.clone(),
                 client: client.clone(),
                 finished: finished.clone(),
+                transcript: transcript.clone(),
+                audio: audio.clone(),
             },
         )
         .await?;
 
-    let ctx = RunContext {
-        app: app.clone(),
-        run_id: run_id.clone(),
-        provider_name: payload.provider.clone(),
-        model,
-        prompt: payload.prompt.clone(),
-        auto_apply: payload.auto_apply,
-        include_tree: payload.include_tree,
-        client,
-        proposed,
-        cancel,
-    };
+    Ok((
+        RunContext {
+            app: app.clone(),
+            run_id,
+            provider_name: payload.provider.clone(),
+            model,
+            auto_apply: payload.auto_apply,
+            client,
+            proposed,
+            cancel,
+            transcript,
+            audio,
+            attachments: Arc::new(payload.attachments.clone()),
+        },
+        finished,
+    ))
+}
 
-    tauri::async_runtime::spawn(async move {
-        // The handle is NOT removed: approval arrives after `agent:finished`
-        // and still needs it. Marking it finished frees the slot; the next run
-        // evicts it. The flag is set from `Drop`, so a panic (or a dropped
-        // task) inside `run_loop` cannot leave the slot occupied forever.
-        let _done = FinishGuard(finished);
-        run_loop(ctx, provider).await;
-    });
+/// The first user message of a fresh run: the task, the `[מצב נוכחי]` tree and
+/// the `[קבצים מצורפים]` list, in that order.
+async fn first_messages(
+    client: &YemotClient,
+    prompt: &str,
+    include_tree: bool,
+    attachments: &[Attachment],
+) -> Vec<Message> {
+    let mut first = prompt.to_string();
+    if include_tree {
+        if let Some(block) = root_tree_block(client).await {
+            first.push_str("\n\n");
+            first.push_str(&block);
+        }
+    }
+    if let Some(block) = attachments_block(attachments) {
+        first.push_str("\n\n");
+        first.push_str(&block);
+    }
+    vec![Message::user_text(first)]
+}
 
-    Ok(AgentRunStarted { run_id })
+/// The one user message a continuation adds: what happened to the previous
+/// proposals, the new instruction, and (when the user attached more files) the
+/// attachment list this run may upload from.
+fn continuation_text(status: &str, prompt: &str, attachments: &[Attachment]) -> String {
+    let mut out = String::from(status);
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push('\n');
+    out.push_str(prompt.trim());
+    if let Some(block) = attachments_block(attachments) {
+        out.push_str("\n\n");
+        out.push_str(&block);
+    }
+    out
+}
+
+/// `[מצב ההצעות הקודמות]` — one line per action of the parent run.
+///
+/// The truth is `WRITE_STATE`, not the proposal list: an id is `בוצע` while it
+/// is claimed, `בוטל` once `undo_action` reversed it (which also releases the
+/// claim), and `לא אושר` when the user never approved it.
+pub fn status_block(
+    actions: &[ProposedAction],
+    applied: &HashSet<String>,
+    undone: &HashSet<String>,
+) -> String {
+    let mut out = String::from("[מצב ההצעות הקודמות]\n");
+    if actions.is_empty() {
+        out.push_str("לא הוצעו שינויים במשימה הקודמת.\n");
+        return out;
+    }
+    for a in actions {
+        let state = if undone.contains(&a.id) {
+            "בוטל"
+        } else if applied.contains(&a.id) {
+            "בוצע"
+        } else {
+            "לא אושר"
+        };
+        out.push_str(&format!("- {} {}: {}\n", a.id, a.path, state));
+    }
+    out
 }
 
 /// Marks a run finished when the loop's task ends — including when it panics or
@@ -314,8 +590,78 @@ const UNDO_STALE_MSG: &str = "הקובץ השתנה מאז הביצוע, לא נ
 struct RunWriteState {
     applied: HashSet<String>,
     undo: HashMap<String, UndoRecord>,
+    /// Ids `undo_action` reversed. Kept separately from `applied` (an undo
+    /// releases the claim so the action can be approved again) — it is what
+    /// tells "בוטל" apart from "לא אושר" in the change log and the status block.
+    undone: HashSet<String>,
+    /// The change log of this run, oldest first.
+    log: Vec<AppliedRecord>,
     client: Arc<YemotClient>,
     at: Instant,
+}
+
+/// One row of the change log ("יומן שינויים"), kept next to the undo records so
+/// the log survives a page reload and is pruned by exactly the same rules.
+#[derive(Debug, Clone)]
+struct AppliedRecord {
+    action_id: String,
+    kind: String,
+    path: String,
+    canon_path: String,
+    params: Vec<ActionParam>,
+    applied_at_ms: u64,
+    undo_available: bool,
+}
+
+/// The contract shape of one applied change.
+#[derive(Debug, Clone, Serialize)]
+pub struct AppliedChange {
+    pub run_id: String,
+    pub action_id: String,
+    pub kind: String,
+    pub path: String,
+    pub display: String,
+    pub applied_at_ms: u64,
+    pub params: Vec<ActionParam>,
+    pub undo_available: bool,
+    pub undone: bool,
+    pub label: String,
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// `("ivr2:/1/000.wav")` → `("000.wav", "/1")`.
+fn file_and_parent(canon_path: &str) -> (String, String) {
+    match canon_path.rsplit_once('/') {
+        Some((dir, name)) => {
+            let dir = dir.strip_suffix("ivr2:").map(|_| "ivr2:/").unwrap_or(dir);
+            (name.to_string(), yemot::display_path(dir))
+        }
+        None => (canon_path.to_string(), "/".to_string()),
+    }
+}
+
+/// Short Hebrew label for one applied change, e.g. `עדכון 3 הגדרות ב-/1/2`.
+pub fn change_label(kind: &str, path: &str, canon_path: &str, params: usize) -> String {
+    match kind {
+        "upload_audio_file" => {
+            let (name, parent) = file_and_parent(canon_path);
+            format!("העלאת קובץ {} ל-{}", name, parent)
+        }
+        "upload_text_file" => {
+            let (name, parent) = file_and_parent(canon_path);
+            format!("כתיבת קובץ {} ל-{}", name, parent)
+        }
+        _ => match params {
+            1 => format!("עדכון הגדרה אחת ב-{}", path),
+            n => format!("עדכון {} הגדרות ב-{}", n, path),
+        },
+    }
 }
 
 static WRITE_STATE: std::sync::OnceLock<Mutex<HashMap<String, RunWriteState>>> =
@@ -364,6 +710,8 @@ async fn claim_ids(run_id: &str, client: &Arc<YemotClient>, wanted: &[String]) -
     let state = map.entry(run_id.to_string()).or_insert_with(|| RunWriteState {
         applied: HashSet::new(),
         undo: HashMap::new(),
+        undone: HashSet::new(),
+        log: Vec::new(),
         client: client.clone(),
         at: Instant::now(),
     });
@@ -389,6 +737,52 @@ async fn record_undo(run_id: &str, records: Vec<UndoRecord>) {
     }
 }
 
+/// Add rows to the run's change log. Re-applying an id (after an undo) replaces
+/// its row rather than adding a second one.
+async fn record_applied(run_id: &str, records: Vec<AppliedRecord>) {
+    let mut map = write_state().lock().await;
+    if let Some(state) = map.get_mut(run_id) {
+        for r in records {
+            state.undone.remove(&r.action_id);
+            state.log.retain(|old| old.action_id != r.action_id);
+            state.log.push(r);
+        }
+    }
+}
+
+/// The change log across every retained run, newest first. This is what the UI
+/// reads to rebuild "יומן שינויים" after a reload, so it must not depend on the
+/// run handle still being in the registry.
+#[tauri::command]
+pub async fn list_applied_changes() -> Result<Vec<AppliedChange>, String> {
+    let mut map = write_state().lock().await;
+    prune(&mut map);
+    let mut out: Vec<AppliedChange> = Vec::new();
+    for (run_id, state) in map.iter() {
+        for r in &state.log {
+            let undone = state.undone.contains(&r.action_id);
+            out.push(AppliedChange {
+                run_id: run_id.clone(),
+                action_id: r.action_id.clone(),
+                kind: r.kind.clone(),
+                path: r.path.clone(),
+                display: yemot::display_path(&r.canon_path),
+                applied_at_ms: r.applied_at_ms,
+                params: r.params.clone(),
+                undo_available: r.undo_available && !undone,
+                undone,
+                label: change_label(&r.kind, &r.path, &r.canon_path, r.params.len()),
+            });
+        }
+    }
+    out.sort_by(|a, b| {
+        b.applied_at_ms
+            .cmp(&a.applied_at_ms)
+            .then_with(|| b.action_id.cmp(&a.action_id))
+    });
+    Ok(out)
+}
+
 /// Release an id so it can be applied again (after a refusal, or an undo).
 async fn release_ids(run_id: &str, ids: &[String]) {
     let mut map = write_state().lock().await;
@@ -406,7 +800,7 @@ pub async fn approve_actions(
     run_id: String,
     action_ids: Vec<String>,
 ) -> Result<Vec<ActionApplyResult>, String> {
-    let (client, actions) = {
+    let (client, actions, audio) = {
         let runs = registry.runs.lock().await;
         let handle = runs
             .get(&run_id)
@@ -415,7 +809,10 @@ pub async fn approve_actions(
         let wanted: HashSet<&String> = action_ids.iter().collect();
         let picked: Vec<ProposedAction> =
             all.into_iter().filter(|a| wanted.contains(&a.id)).collect();
-        (handle.client.clone(), picked)
+        // The attachment behind each audio action, as the tool resolved it from
+        // the run's own list. Nothing the model wrote reaches the filesystem.
+        let audio = handle.audio.lock().await.clone();
+        (handle.client.clone(), picked, audio)
     };
     if actions.is_empty() {
         return Err("לא נבחרו פעולות לביצוע".to_string());
@@ -431,17 +828,36 @@ pub async fn approve_actions(
         .cloned()
         .collect();
 
-    let outcome = apply_actions(&client, &fresh).await;
+    let outcome = apply_actions(&client, &fresh, &audio).await;
     let ApplyOutcome {
         mut results,
         undo,
         refused,
         rehashed,
     } = outcome;
+    let undoable: HashSet<String> = undo.iter().map(|u| u.action_id.clone()).collect();
     record_undo(&run_id, undo).await;
     if !refused.is_empty() {
         release_ids(&run_id, &refused).await;
     }
+
+    // The change log: every action that actually wrote something.
+    let at = now_ms();
+    let done: HashSet<&String> = results.iter().filter(|r| r.ok).map(|r| &r.action_id).collect();
+    let log: Vec<AppliedRecord> = fresh
+        .iter()
+        .filter(|a| done.contains(&a.id))
+        .map(|a| AppliedRecord {
+            action_id: a.id.clone(),
+            kind: a.kind.clone(),
+            path: a.path.clone(),
+            canon_path: a.canon_path.clone(),
+            params: a.params.clone(),
+            applied_at_ms: at,
+            undo_available: undoable.contains(&a.id),
+        })
+        .collect();
+    record_applied(&run_id, log).await;
 
     // Approving one action at a time must keep working: every proposal still
     // pending on a path just written holds the *pre-write* snapshot, and would
@@ -610,6 +1026,9 @@ pub async fn undo_action(run_id: String, action_id: String) -> Result<ActionAppl
         let mut map = write_state().lock().await;
         if let Some(state) = map.get_mut(&run_id) {
             state.undo.remove(&action_id);
+            // The log row stays — the change happened. It is now marked בוטל,
+            // which is also what the continuation status block reports.
+            state.undone.insert(action_id.clone());
         }
     }
     Ok(result)
@@ -664,7 +1083,11 @@ fn apply_rehashes(
 }
 
 /// Group by extension so each path costs exactly one `UpdateExtension`.
-async fn apply_actions(client: &YemotClient, actions: &[ProposedAction]) -> ApplyOutcome {
+async fn apply_actions(
+    client: &YemotClient,
+    actions: &[ProposedAction],
+    audio: &HashMap<String, Attachment>,
+) -> ApplyOutcome {
     // Preserve first-seen path order; last value wins per key.
     let mut order: Vec<String> = Vec::new();
     let mut grouped: HashMap<String, Vec<(String, String)>> = HashMap::new();
@@ -742,6 +1165,52 @@ async fn apply_actions(client: &YemotClient, actions: &[ProposedAction]) -> Appl
     let mut undo = Vec::new();
     let mut refused = Vec::new();
     for a in actions {
+        if a.kind == "upload_audio_file" {
+            // The bytes are read HERE, not when the action was proposed: the
+            // approval dialog may sit open for minutes, and holding a 25 MB
+            // buffer per proposal (or uploading a file the user has since
+            // replaced) would both be wrong.
+            let Some(att) = audio.get(&a.id) else {
+                refused.push(a.id.clone());
+                out.push(refusal(a, "הקובץ המצורף אינו זמין לריצה זו"));
+                continue;
+            };
+            let bytes = match std::fs::read(&att.local_path) {
+                Ok(b) => b,
+                Err(_) => {
+                    refused.push(a.id.clone());
+                    out.push(refusal(
+                        a,
+                        &format!("לא ניתן לקרוא את הקובץ {} מהמחשב", att.name),
+                    ));
+                    continue;
+                }
+            };
+            match client.upload_audio_file(&a.canon_path, bytes, &att.name).await {
+                // No undo record on purpose: Yemot exposes no file delete
+                // (`file_action` is a denied capability) and the previous audio
+                // is not recoverable, so an "undo" here would be a lie.
+                Ok(size) => out.push(ActionApplyResult {
+                    action_id: a.id.clone(),
+                    ok: true,
+                    message: format!("הקובץ {} הועלה אל {} ({} בתים)", att.name, a.path, size),
+                    params: Vec::new(),
+                    undo: None,
+                }),
+                Err(e) => {
+                    refused.push(a.id.clone());
+                    out.push(ActionApplyResult {
+                        action_id: a.id.clone(),
+                        ok: false,
+                        message: yemot::render_error(&e),
+                        params: Vec::new(),
+                        undo: None,
+                    });
+                }
+            }
+            continue;
+        }
+
         if a.kind == "upload_text_file" {
             // The same stale guard the extension writes get. `upload_text_file`
             // replaces the whole file, so a change since the proposal would be
@@ -890,29 +1359,27 @@ struct RunContext {
     run_id: String,
     provider_name: String,
     model: String,
-    prompt: String,
     auto_apply: bool,
-    include_tree: bool,
     client: Arc<YemotClient>,
     proposed: Arc<Mutex<Vec<ProposedAction>>>,
     cancel: CancellationToken,
+    /// Where the loop leaves its messages for a later continuation.
+    transcript: Arc<Mutex<Vec<Message>>>,
+    audio: Arc<Mutex<HashMap<String, Attachment>>>,
+    attachments: Arc<Vec<Attachment>>,
 }
 
-async fn run_loop(ctx: RunContext, provider: Box<dyn Provider>) {
+/// One agent run over `messages`. A fresh run passes a single user message; a
+/// continuation passes the parent's transcript plus one more — from here on the
+/// two are the same run.
+async fn run_loop(ctx: RunContext, provider: Box<dyn Provider>, messages: Vec<Message>) {
     let started_at = Instant::now();
     events::started(&ctx.app, &ctx.run_id, &ctx.provider_name, &ctx.model);
 
     let tools = tools::tool_specs();
     let system = prompt::system_blocks(&ctx.provider_name);
 
-    let mut first = ctx.prompt.clone();
-    if ctx.include_tree {
-        if let Some(block) = root_tree_block(&ctx.client).await {
-            first.push_str("\n\n");
-            first.push_str(&block);
-        }
-    }
-    let mut messages: Vec<Message> = vec![Message::user_text(first)];
+    let mut messages: Vec<Message> = messages;
 
     let tool_ctx = ToolCtx {
         app: ctx.app.clone(),
@@ -924,6 +1391,8 @@ async fn run_loop(ctx: RunContext, provider: Box<dyn Provider>) {
         proposed: ctx.proposed.clone(),
         action_seq: Arc::new(AtomicUsize::new(0)),
         session_error: Arc::new(Mutex::new(None)),
+        attachments: ctx.attachments.clone(),
+        audio: ctx.audio.clone(),
     };
 
     let mut usage = Usage::default();
@@ -1079,6 +1548,10 @@ async fn run_loop(ctx: RunContext, provider: Box<dyn Provider>) {
 
     let actions = ctx.proposed.lock().await.clone();
     events::actions_proposed(&ctx.app, &ctx.run_id, &actions);
+
+    // Retained for `continue_agent_run`; dropped with the handle when the next
+    // run claims a slot.
+    *ctx.transcript.lock().await = messages;
 
     let run_usage = RunUsage {
         input_tokens: usage.input,
@@ -1734,17 +2207,19 @@ mod tests {
     /// as well as by age — the global map is never allowed to just grow.
     #[test]
     fn write_state_is_bounded_by_count_and_age() {
+        fn empty_state(at: Instant) -> RunWriteState {
+            RunWriteState {
+                applied: HashSet::new(),
+                undo: HashMap::new(),
+                undone: HashSet::new(),
+                log: Vec::new(),
+                client: Arc::new(YemotClient::new("t")),
+                at,
+            }
+        }
         let mut map: HashMap<String, RunWriteState> = HashMap::new();
         for i in 0..(MAX_WRITE_STATES + 10) {
-            map.insert(
-                format!("r_{}", i),
-                RunWriteState {
-                    applied: HashSet::new(),
-                    undo: HashMap::new(),
-                    client: Arc::new(YemotClient::new("t")),
-                    at: Instant::now(),
-                },
-            );
+            map.insert(format!("r_{}", i), empty_state(Instant::now()));
         }
         prune(&mut map);
         assert_eq!(map.len(), MAX_WRITE_STATES);
@@ -1752,12 +2227,7 @@ mod tests {
         // an entry past the retention window goes regardless of the count
         map.insert(
             "r_old".to_string(),
-            RunWriteState {
-                applied: HashSet::new(),
-                undo: HashMap::new(),
-                client: Arc::new(YemotClient::new("t")),
-                at: Instant::now() - UNDO_RETENTION - Duration::from_secs(1),
-            },
+            empty_state(Instant::now() - UNDO_RETENTION - Duration::from_secs(1)),
         );
         prune(&mut map);
         assert!(!map.contains_key("r_old"));
@@ -1791,6 +2261,8 @@ mod tests {
                 proposed: proposed.clone(),
                 client: Arc::new(YemotClient::new("t")),
                 finished: flag.clone(),
+                transcript: Arc::new(Mutex::new(Vec::new())),
+                audio: Arc::new(Mutex::new(HashMap::new())),
             },
             proposed,
             flag,
@@ -1814,6 +2286,223 @@ mod tests {
             previous: None,
             snapshot_hash: None,
         }
+    }
+
+    // -- continuation ------------------------------------------------------
+
+    #[test]
+    fn the_status_block_reports_applied_undone_and_unapproved() {
+        let mut a1 = action("a_1");
+        let mut a2 = action("a_2");
+        a2.path = "/4".into();
+        let mut a3 = action("a_3");
+        a3.path = "/5".into();
+        a1.path = "/3".into();
+
+        let applied = HashSet::from(["a_1".to_string()]);
+        let undone = HashSet::from(["a_2".to_string()]);
+        let block = status_block(&[a1, a2, a3], &applied, &undone);
+        assert_eq!(
+            block,
+            "[מצב ההצעות הקודמות]\n- a_1 /3: בוצע\n- a_2 /4: בוטל\n- a_3 /5: לא אושר\n"
+        );
+
+        // an undone action is released from `applied`, but stays "בוטל"
+        let block = status_block(
+            &[action("a_1")],
+            &HashSet::new(),
+            &HashSet::from(["a_1".to_string()]),
+        );
+        assert!(block.contains("בוטל"));
+
+        assert!(status_block(&[], &HashSet::new(), &HashSet::new())
+            .contains("לא הוצעו שינויים"));
+    }
+
+    #[test]
+    fn a_continuation_carries_the_status_then_the_instruction() {
+        let status = status_block(&[action("a_1")], &HashSet::new(), &HashSet::new());
+        let text = continuation_text(&status, "  שנה גם את הכותרת  ", &[]);
+        assert!(text.starts_with("[מצב ההצעות הקודמות]\n"));
+        assert!(text.ends_with("שנה גם את הכותרת"));
+        assert!(!text.contains("[קבצים מצורפים]"));
+
+        let with_files = continuation_text(&status, "העלה", &[attachment("f1", "a.mp3", 2048)]);
+        assert!(with_files.contains("[קבצים מצורפים]\n- f1: a.mp3 (2 KB, audio/mpeg)"));
+    }
+
+    // -- attachments -------------------------------------------------------
+
+    fn attachment(id: &str, name: &str, size: u64) -> Attachment {
+        Attachment {
+            id: id.to_string(),
+            name: name.to_string(),
+            local_path: String::new(),
+            size,
+            mime: "audio/mpeg".to_string(),
+        }
+    }
+
+    fn temp_attachment(name: &str, bytes: usize) -> (Attachment, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("ai_yemot_test_{}", new_run_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        std::fs::write(&path, vec![0u8; bytes]).unwrap();
+        (
+            Attachment {
+                id: "f1".to_string(),
+                name: name.to_string(),
+                local_path: path.to_string_lossy().to_string(),
+                size: bytes as u64,
+                mime: "audio/mpeg".to_string(),
+            },
+            path,
+        )
+    }
+
+    #[test]
+    fn attachments_are_validated_at_run_start() {
+        let (ok, path) = temp_attachment("ברכה.mp3", 64);
+        assert!(validate_attachments(std::slice::from_ref(&ok)).is_ok());
+
+        // a document is not an audio file
+        let mut bad_ext = ok.clone();
+        bad_ext.name = "רשימה.txt".to_string();
+        assert!(validate_attachments(&[bad_ext]).is_err());
+
+        // a plausible name with a non-audio mime is still refused
+        let mut bad_mime = ok.clone();
+        bad_mime.mime = "application/zip".to_string();
+        assert!(validate_attachments(&[bad_mime]).is_err());
+
+        // declared size over the cap, without touching the disk
+        let mut too_big = ok.clone();
+        too_big.size = yemot::MAX_UPLOAD_BYTES + 1;
+        assert!(validate_attachments(&[too_big]).is_err());
+
+        // the file must exist and be a regular file
+        let mut missing = ok.clone();
+        missing.local_path = format!("{}.nope", ok.local_path);
+        assert!(validate_attachments(&[missing]).is_err());
+        let mut a_dir = ok.clone();
+        a_dir.local_path = path.parent().unwrap().to_string_lossy().to_string();
+        a_dir.name = "תיקיה.mp3".to_string();
+        assert!(validate_attachments(&[a_dir]).is_err());
+
+        // duplicate ids would make the id → path resolution ambiguous
+        assert!(validate_attachments(&[ok.clone(), ok.clone()]).is_err());
+
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn the_attachments_block_lists_only_ids_names_and_sizes() {
+        assert!(attachments_block(&[]).is_none());
+        let block = attachments_block(&[
+            attachment("f1", "ברכה.mp3", 2_048),
+            attachment("f2", "שיר.wav", 300),
+        ])
+        .unwrap();
+        assert_eq!(
+            block,
+            "[קבצים מצורפים]\n- f1: ברכה.mp3 (2 KB, audio/mpeg)\n- f2: שיר.wav (1 KB, audio/mpeg)\n"
+        );
+        // the local path never reaches the model
+        assert!(!block.contains("local_path"));
+    }
+
+    // -- change log --------------------------------------------------------
+
+    #[test]
+    fn change_labels_read_like_a_log_row() {
+        assert_eq!(
+            change_label("set_extension_params", "/1/2", "ivr2:/1/2", 3),
+            "עדכון 3 הגדרות ב-/1/2"
+        );
+        assert_eq!(
+            change_label("set_extension_params", "/3", "ivr2:/3", 1),
+            "עדכון הגדרה אחת ב-/3"
+        );
+        assert_eq!(
+            change_label("upload_audio_file", "ivr2:/1/000.wav", "ivr2:/1/000.wav", 2),
+            "העלאת קובץ 000.wav ל-/1"
+        );
+        assert_eq!(
+            change_label("upload_text_file", "ivr2:/000.tts", "ivr2:/000.tts", 0),
+            "כתיבת קובץ 000.tts ל-/"
+        );
+    }
+
+    #[tokio::test]
+    async fn applied_changes_are_newest_first_and_carry_the_undone_flag() {
+        let run = format!("r_test_{}", new_run_id());
+        let client = Arc::new(YemotClient::new("t"));
+        claim_ids(&run, &client, &["a_1".to_string(), "a_2".to_string()]).await;
+        record_applied(
+            &run,
+            vec![
+                AppliedRecord {
+                    action_id: "a_1".into(),
+                    kind: "set_extension_params".into(),
+                    path: "/3".into(),
+                    canon_path: "ivr2:/3".into(),
+                    params: vec![ActionParam { key: "type".into(), value: "menu".into() }],
+                    applied_at_ms: 1_000,
+                    undo_available: true,
+                },
+                AppliedRecord {
+                    action_id: "a_2".into(),
+                    kind: "upload_audio_file".into(),
+                    path: "ivr2:/1/000.wav".into(),
+                    canon_path: "ivr2:/1/000.wav".into(),
+                    params: vec![ActionParam { key: "file".into(), value: "000.wav".into() }],
+                    applied_at_ms: 2_000,
+                    undo_available: false,
+                },
+            ],
+        )
+        .await;
+        // what `undo_action` does on success
+        write_state().lock().await.get_mut(&run).unwrap().undone.insert("a_1".to_string());
+
+        let all = list_applied_changes().await.unwrap();
+        let mine: Vec<&AppliedChange> = all.iter().filter(|c| c.run_id == run).collect();
+        assert_eq!(mine.len(), 2);
+        // newest first
+        assert_eq!(mine[0].action_id, "a_2");
+        assert_eq!(mine[0].display, "/1/000.wav");
+        assert_eq!(mine[0].label, "העלאת קובץ 000.wav ל-/1");
+        // an audio upload is never undoable
+        assert!(!mine[0].undo_available);
+        assert!(!mine[0].undone);
+
+        assert_eq!(mine[1].action_id, "a_1");
+        assert_eq!(mine[1].label, "עדכון הגדרה אחת ב-/3");
+        assert!(mine[1].undone);
+        // an undone row cannot be undone a second time
+        assert!(!mine[1].undo_available);
+
+        // re-applying the same id replaces its row instead of duplicating it
+        record_applied(
+            &run,
+            vec![AppliedRecord {
+                action_id: "a_1".into(),
+                kind: "set_extension_params".into(),
+                path: "/3".into(),
+                canon_path: "ivr2:/3".into(),
+                params: vec![ActionParam { key: "type".into(), value: "menu".into() }],
+                applied_at_ms: 3_000,
+                undo_available: true,
+            }],
+        )
+        .await;
+        let all = list_applied_changes().await.unwrap();
+        let mine: Vec<&AppliedChange> = all.iter().filter(|c| c.run_id == run).collect();
+        assert_eq!(mine.len(), 2);
+        assert_eq!(mine[0].action_id, "a_1");
+        assert!(!mine[0].undone, "a fresh apply clears the undone mark");
+
+        write_state().lock().await.remove(&run);
     }
 
     #[tokio::test]
