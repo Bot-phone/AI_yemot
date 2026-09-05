@@ -11,13 +11,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
 
 const YEMOT_API_BASE: &str = "https://www.call2all.co.il/ym/api/";
 const CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 const MAX_CHILD_REQUESTS: usize = 25;
+/// Concurrent child reads in `list_extensions(depth=2)`.
+const MAX_PARALLEL_READS: usize = 6;
+const MAX_FILE_LINES: usize = 40;
 const MAX_TREE_LINES: usize = 60;
 const DEFAULT_MAX_BYTES: usize = 8192;
 const NOTE_UNVERIFIED: &str = "לא ניתן היה לאמת את השינוי (הקריאה החוזרת נכשלה)";
@@ -213,18 +216,22 @@ pub fn canon_ext(input: &str) -> Result<String, YemotError> {
     Ok(format!("ivr2:/{}", segments.join("/")))
 }
 
+/// Characters a file name may never contain (path separators, wildcards and
+/// the Windows-reserved set). Everything else — Hebrew included — is allowed:
+/// an allow-list of ASCII would reject legitimate names like `רשימה.txt`.
+const FILENAME_DENY: &[char] = &['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
+
 fn is_valid_filename(name: &str) -> bool {
-    if name.is_empty() || name.starts_with('.') {
+    if name.is_empty() || name.starts_with('.') || name.contains("..") {
+        return false;
+    }
+    if name.chars().any(|c| FILENAME_DENY.contains(&c) || c.is_control()) {
         return false;
     }
     let Some((stem, ext)) = name.rsplit_once('.') else {
         return false;
     };
-    !stem.is_empty()
-        && !ext.is_empty()
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    !stem.trim().is_empty() && !ext.trim().is_empty()
 }
 
 /// Canonicalise a file path (`ivr2:/1/ext.ini`). The directory part must be a
@@ -286,10 +293,46 @@ fn file_extension(path: &str) -> String {
 // Value types
 // ---------------------------------------------------------------------------
 
+/// Where an `ext.ini` snapshot came from.
+///
+/// `Listing` entries are the `extIni` object of a `GetIVR2Dir` reply: handy for
+/// a tree view, but they carry no size/mtime and the server may summarise them,
+/// so they must never satisfy the read-before-write gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExtSource {
+    File,
+    Listing,
+}
+
 #[derive(Debug, Clone)]
 pub struct ExtRead {
     pub exists: bool,
     pub ini: ExtIni,
+    pub size: Option<u64>,
+    pub mtime: Option<String>,
+    /// `File` = read from `ext.ini` itself; `Listing` = seeded from a directory.
+    pub source: ExtSource,
+}
+
+impl ExtRead {
+    /// Stable fingerprint of the file as it was when this snapshot was taken.
+    /// Used to detect a server-side change between proposal and approval.
+    pub fn snapshot_hash(&self) -> String {
+        let text = if self.exists { self.ini.to_text() } else { String::new() };
+        // FNV-1a: no dependency, and collisions here only cost a refused write.
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in text.as_bytes() {
+            hash ^= *b as u64;
+            hash = hash.wrapping_mul(0x100_0000_01b3);
+        }
+        format!("{}:{:x}", self.exists, hash)
+    }
+}
+
+/// One file inside an extension folder (`list_files`).
+#[derive(Debug, Clone, Serialize)]
+pub struct FileEntry {
+    pub name: String,
     pub size: Option<u64>,
     pub mtime: Option<String>,
 }
@@ -332,6 +375,7 @@ struct CachedExt {
     ini: ExtIni,
     size: Option<u64>,
     mtime: Option<String>,
+    source: ExtSource,
     at: Instant,
 }
 
@@ -391,13 +435,14 @@ async fn post_json(
         .json(&Value::Object(params))
         .send()
         .await
-        .map_err(|e| YemotError::Network(e.to_string()))?;
+        // `without_url` keeps the token-bearing URL out of the message.
+        .map_err(|e| YemotError::Network(e.without_url().to_string()))?;
 
     let status = res.status();
     let body = res
         .text()
         .await
-        .map_err(|e| YemotError::Network(e.to_string()))?;
+        .map_err(|e| YemotError::Network(e.without_url().to_string()))?;
 
     let json: Value = match serde_json::from_str(&body) {
         Ok(v) => v,
@@ -424,6 +469,25 @@ async fn call_raw(
     let json = post_json(token, endpoint, params).await?;
     classify_response(&json)?;
     Ok(json)
+}
+
+/// Delay before the single retry of a failed READ.
+const READ_RETRY_DELAY: Duration = Duration::from_millis(500);
+
+/// A READ, retried once on a transport failure. Never use this for a write:
+/// a `NETWORK_ERROR` on `UpdateExtension` may already have been applied.
+async fn call_raw_read(
+    token: &str,
+    endpoint: &str,
+    params: Map<String, Value>,
+) -> Result<Value, YemotError> {
+    match call_raw(token, endpoint, params.clone()).await {
+        Err(YemotError::Network(_)) => {
+            tokio::time::sleep(READ_RETRY_DELAY).await;
+            call_raw(token, endpoint, params).await
+        }
+        other => other,
+    }
 }
 
 fn params_of(pairs: &[(&str, &str)]) -> Map<String, Value> {
@@ -493,6 +557,48 @@ fn children_from_dir(parent_canon: &str, json: &Value) -> Vec<ExtNode> {
     out
 }
 
+/// Files of a `GetIVR2Dir` reply. `files` holds audio/other files; ini, system
+/// messages and reports live in their own arrays, so all four are collected.
+fn files_from_dir(json: &Value) -> Vec<FileEntry> {
+    let mut out: Vec<FileEntry> = Vec::new();
+    for bucket in ["files", "ini", "messages", "html"] {
+        let Some(arr) = json.get(bucket).and_then(|v| v.as_array()) else {
+            continue;
+        };
+        for f in arr {
+            let Some(name) = f.get("name").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            if name.is_empty() || out.iter().any(|e| e.name == name) {
+                continue;
+            }
+            out.push(FileEntry {
+                name: name.to_string(),
+                size: f.get("size").and_then(|v| v.as_u64()),
+                mtime: f
+                    .get("mtime")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+            });
+        }
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+/// Did the read-back value match what we asked for?
+///
+/// Two asymmetries of the Yemot format matter here: an empty value may come
+/// back as a missing key (the server drops `key=`), and the ini parser trims
+/// both sides, so a trailing space in the request is not a failed write.
+fn param_applied(current: Option<&str>, wanted: &str) -> bool {
+    let wanted = wanted.trim();
+    match current {
+        Some(c) => c.trim() == wanted,
+        None => wanted.is_empty(),
+    }
+}
+
 impl YemotClient {
     pub fn new(token: impl Into<String>) -> Self {
         YemotClient {
@@ -503,6 +609,15 @@ impl YemotClient {
 
     async fn call(&self, endpoint: &str, params: Map<String, Value>) -> Result<Value, YemotError> {
         call_raw(&self.token, endpoint, params).await
+    }
+
+    /// Like [`Self::call`], but retried once on a transport failure. Reads only.
+    async fn call_read(
+        &self,
+        endpoint: &str,
+        params: Map<String, Value>,
+    ) -> Result<Value, YemotError> {
+        call_raw_read(&self.token, endpoint, params).await
     }
 
     /// Is a fresh `ext.ini` for this path already cached?
@@ -526,6 +641,7 @@ impl YemotClient {
                 ini: read.ini.clone(),
                 size: read.size,
                 mtime: read.mtime.clone(),
+                source: read.source,
                 at: Instant::now(),
             },
         );
@@ -533,6 +649,10 @@ impl YemotClient {
 
     /// Read (and cache) the `ext.ini` of an extension.
     /// A missing file is *not* an error — it yields `exists=false`.
+    ///
+    /// The result carries its [`ExtSource`]: a cache hit seeded from a directory
+    /// listing is `Listing`, and callers that are about to write must insist on
+    /// `File` (see [`Self::get_ext_ini_fresh`]).
     pub async fn get_ext_ini(&self, path: &str) -> Result<ExtRead, YemotError> {
         let canon = canon_ext(path)?;
         if let Some(hit) = self.cache.read().await.fresh(&canon) {
@@ -541,11 +661,25 @@ impl YemotClient {
                 ini: hit.ini.clone(),
                 size: hit.size,
                 mtime: hit.mtime.clone(),
+                source: hit.source,
             });
         }
+        self.fetch_ext_ini(&canon).await
+    }
 
-        let what = ext_ini_path(&canon);
-        let json = match self.call("GetTextFile", params_of(&[("what", &what)])).await {
+    /// Read `ext.ini` from the server, ignoring (and refreshing) the cache.
+    /// The result is always `ExtSource::File`.
+    pub async fn get_ext_ini_fresh(&self, path: &str) -> Result<ExtRead, YemotError> {
+        let canon = canon_ext(path)?;
+        self.fetch_ext_ini(&canon).await
+    }
+
+    async fn fetch_ext_ini(&self, canon: &str) -> Result<ExtRead, YemotError> {
+        let what = ext_ini_path(canon);
+        let json = match self
+            .call_read("GetTextFile", params_of(&[("what", &what)]))
+            .await
+        {
             Ok(j) => j,
             Err(e) if is_missing_file(&e) => {
                 let read = ExtRead {
@@ -553,8 +687,9 @@ impl YemotClient {
                     ini: ExtIni::default(),
                     size: None,
                     mtime: None,
+                    source: ExtSource::File,
                 };
-                self.cache_put(&canon, &read).await;
+                self.cache_put(canon, &read).await;
                 return Ok(read);
             }
             Err(e) => return Err(e),
@@ -580,8 +715,9 @@ impl YemotClient {
                 .get("mtime")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
+            source: ExtSource::File,
         };
-        self.cache_put(&canon, &read).await;
+        self.cache_put(canon, &read).await;
         Ok(read)
     }
 
@@ -590,11 +726,19 @@ impl YemotClient {
             if obj.is_empty() {
                 return;
             }
+            // A real file read must not be downgraded to a listing snapshot.
+            if matches!(
+                self.cache.read().await.fresh(canon),
+                Some(CachedExt { source: ExtSource::File, .. })
+            ) {
+                return;
+            }
             let read = ExtRead {
                 exists: true,
                 ini: ini_from_object(obj),
                 size: None,
                 mtime: None,
+                source: ExtSource::Listing,
             };
             self.cache_put(canon, &read).await;
         }
@@ -609,7 +753,7 @@ impl YemotClient {
     ) -> Result<Vec<ExtNode>, YemotError> {
         let root = canon_ext(path)?;
         let json = self
-            .call("GetIVR2Dir", params_of(&[("path", &root)]))
+            .call_read("GetIVR2Dir", params_of(&[("path", &root)]))
             .await?;
         self.seed_cache_from_dir(&root, &json).await;
         let mut nodes = children_from_dir(&root, &json);
@@ -620,11 +764,16 @@ impl YemotClient {
                 .take(MAX_CHILD_REQUESTS)
                 .map(|n| n.path.clone())
                 .collect();
+            // Cap the burst: 25 simultaneous requests get the account throttled.
+            let sem = Arc::new(Semaphore::new(MAX_PARALLEL_READS));
             let mut set = tokio::task::JoinSet::new();
             for target in targets {
                 let token = self.token.clone();
+                let sem = sem.clone();
                 set.spawn(async move {
-                    let res = call_raw(&token, "GetIVR2Dir", params_of(&[("path", &target)])).await;
+                    let _permit = sem.acquire_owned().await;
+                    let res =
+                        call_raw_read(&token, "GetIVR2Dir", params_of(&[("path", &target)])).await;
                     (target, res)
                 });
             }
@@ -643,6 +792,16 @@ impl YemotClient {
         Ok(nodes)
     }
 
+    /// List the files (not the sub-extensions) of one extension folder.
+    pub async fn list_files(&self, path: &str) -> Result<Vec<FileEntry>, YemotError> {
+        let canon = canon_ext(path)?;
+        let json = self
+            .call_read("GetIVR2Dir", params_of(&[("path", &canon)]))
+            .await?;
+        self.seed_cache_from_dir(&canon, &json).await;
+        Ok(files_from_dir(&json))
+    }
+
     /// Read any text file (ini / txt / …). Audio and binary files are refused.
     pub async fn get_text_file(&self, path: &str) -> Result<TextFile, YemotError> {
         let canon = canon_file(path)?;
@@ -653,7 +812,10 @@ impl YemotClient {
                 ext
             )));
         }
-        match self.call("GetTextFile", params_of(&[("what", &canon)])).await {
+        match self
+            .call_read("GetTextFile", params_of(&[("what", &canon)]))
+            .await
+        {
             Ok(json) => {
                 let meta = json
                     .get("file")
@@ -681,7 +843,7 @@ impl YemotClient {
     /// `GetSession`, whitelisted to three harmless fields. The response also
     /// carries `accessPassword` / `recordPassword`; those must never leave Rust.
     pub async fn get_system_info(&self) -> Result<SystemInfo, YemotError> {
-        let json = self.call("GetSession", Map::new()).await?;
+        let json = self.call_read("GetSession", Map::new()).await?;
         Ok(SystemInfo {
             system: json
                 .get("username")
@@ -745,7 +907,7 @@ impl YemotClient {
             .map(|(key, value)| match &read {
                 Ok(r) => {
                     let current = r.ini.get(key.trim());
-                    let applied = current == Some(value.as_str());
+                    let applied = param_applied(current, value);
                     ParamOutcome {
                         key: key.trim().to_string(),
                         value: value.clone(),
@@ -848,6 +1010,25 @@ pub fn render_tree(nodes: &[ExtNode]) -> String {
     }
     if nodes.len() > MAX_TREE_LINES {
         out.push_str(&format!("… ועוד {}\n", nodes.len() - MAX_TREE_LINES));
+    }
+    out
+}
+
+pub fn render_files(path: &str, files: &[FileEntry]) -> String {
+    if files.is_empty() {
+        return format!("ext={} (אין קבצים)\n", display_path(path));
+    }
+    let mut out = format!("ext={} files={}\n", display_path(path), files.len());
+    for f in files.iter().take(MAX_FILE_LINES) {
+        out.push_str(&format!(
+            "{}  size={}  mtime={}\n",
+            f.name,
+            f.size.map(|s| s.to_string()).unwrap_or_else(|| "-".to_string()),
+            f.mtime.clone().unwrap_or_else(|| "-".to_string())
+        ));
+    }
+    if files.len() > MAX_FILE_LINES {
+        out.push_str(&format!("… ועוד {}\n", files.len() - MAX_FILE_LINES));
     }
     out
 }
@@ -959,29 +1140,42 @@ pub struct YemotSimpleResult {
 // Tauri commands
 // ---------------------------------------------------------------------------
 
-/// Minimal URL-encoding for query parameter values.
-fn urlencode(input: &str) -> String {
-    let mut out = String::new();
-    for b in input.as_bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(*b as char)
-            }
-            _ => out.push_str(&format!("%{:02X}", b)),
-        }
+/// URL + JSON body of one API call. Split out so a test can assert that no
+/// credential ever reaches the query string.
+///
+/// A token is *not* a body parameter: it travels in the `authorization` header,
+/// exactly like [`post_json`] does for the agent's calls.
+fn post_parts(endpoint: &str, params: &[(&str, &str)]) -> (String, Value) {
+    let mut body = Map::new();
+    for (k, v) in params {
+        body.insert((*k).to_string(), json!(v));
     }
-    out
+    (format!("{}{}", YEMOT_API_BASE, endpoint), Value::Object(body))
 }
 
-async fn yemot_get(url: &str) -> Result<Value, String> {
-    let res = http()
-        .get(url)
+/// One API call as POST + JSON body. The Yemot API accepts POST with a JSON
+/// body on every endpoint ("את כל הבקשות ניתן לשלוח בGET או בPOST"), and unlike
+/// a query string a body is not written to proxy / server access logs.
+async fn yemot_post(
+    endpoint: &str,
+    token: Option<&str>,
+    params: &[(&str, &str)],
+) -> Result<Value, String> {
+    let (url, body) = post_parts(endpoint, params);
+    let mut req = http()
+        .post(&url)
+        .header("Content-Type", "application/json");
+    if let Some(t) = token {
+        req = req.header("authorization", t);
+    }
+    let res = req
+        .json(&body)
         .send()
         .await
-        .map_err(|e| format!("שגיאת רשת: {}", e))?;
+        .map_err(|e| format!("שגיאת רשת: {}", e.without_url()))?;
     res.json::<Value>()
         .await
-        .map_err(|e| format!("שגיאת פענוח תשובה: {}", e))
+        .map_err(|e| format!("שגיאת פענוח תשובה: {}", e.without_url()))
 }
 
 #[tauri::command]
@@ -1060,14 +1254,12 @@ pub async fn request_yemot_mfa(
     mfa_token: String,
     method: String, // "call" or "sms"
 ) -> Result<YemotMfaResult, String> {
-    let url = format!(
-        "{}SendMfaCode?token={}&mfaToken={}&method={}",
-        YEMOT_API_BASE,
-        urlencode(&token),
-        urlencode(&mfa_token),
-        urlencode(&method)
-    );
-    let json = yemot_get(&url).await?;
+    let json = yemot_post(
+        "SendMfaCode",
+        Some(token.trim()),
+        &[("mfaToken", &mfa_token), ("method", &method)],
+    )
+    .await?;
     let msg = json["message"].as_str().unwrap_or("");
 
     match classify_response(&json) {
@@ -1094,14 +1286,12 @@ pub async fn verify_yemot_mfa(
     mfa_token: String,
     code: String,
 ) -> Result<YemotMfaResult, String> {
-    let url = format!(
-        "{}VerifyMfaCode?token={}&mfaToken={}&code={}",
-        YEMOT_API_BASE,
-        urlencode(&token),
-        urlencode(&mfa_token),
-        urlencode(&code)
-    );
-    let json = yemot_get(&url).await?;
+    let json = yemot_post(
+        "VerifyMfaCode",
+        Some(token.trim()),
+        &[("mfaToken", &mfa_token), ("code", &code)],
+    )
+    .await?;
     let msg = json["message"].as_str().unwrap_or("");
 
     match classify_response(&json) {
@@ -1246,13 +1436,13 @@ pub async fn login_yemot(username: String, password: String) -> Result<YemotLogi
         });
     }
 
-    let url = format!(
-        "{}Login?username={}&password={}",
-        YEMOT_API_BASE,
-        urlencode(&username),
-        urlencode(&password)
-    );
-    let json = yemot_get(&url).await?;
+    // POST: a password in a query string ends up in every access log on the way.
+    let json = yemot_post(
+        "Login",
+        None,
+        &[("username", username.trim()), ("password", &password)],
+    )
+    .await?;
     let msg = json["message"].as_str().unwrap_or("");
 
     if classify_response(&json).is_err() {
@@ -1279,12 +1469,7 @@ pub async fn login_yemot(username: String, password: String) -> Result<YemotLogi
     }
 
     // Check global MFA status for this session
-    let mfa_url = format!(
-        "{}MFASession?token={}&action=isPass",
-        YEMOT_API_BASE,
-        urlencode(&token)
-    );
-    let mfa_json = yemot_get(&mfa_url).await?;
+    let mfa_json = yemot_post("MFASession", Some(&token), &[("action", "isPass")]).await?;
     let is_pass = mfa_json["isPass"].as_bool().unwrap_or(false);
 
     Ok(YemotLoginResult {
@@ -1302,12 +1487,12 @@ pub async fn login_yemot(username: String, password: String) -> Result<YemotLogi
 /// Get available MFA verification methods (call / SMS etc.) for a session.
 #[tauri::command]
 pub async fn get_mfa_methods(token: String) -> Result<MfaMethodsResult, String> {
-    let url = format!(
-        "{}MFASession?token={}&action=getMFAMethods",
-        YEMOT_API_BASE,
-        urlencode(&token)
-    );
-    let json = yemot_get(&url).await?;
+    let json = yemot_post(
+        "MFASession",
+        Some(token.trim()),
+        &[("action", "getMFAMethods")],
+    )
+    .await?;
 
     let mut methods = Vec::new();
     if let Some(arr) = json["mfaMethods"].as_array() {
@@ -1360,15 +1545,17 @@ pub async fn send_mfa_code(
     mfa_id: String,
     send_type: String,
 ) -> Result<YemotSimpleResult, String> {
-    let url = format!(
-        "{}MFASession?token={}&action=sendMFA&mfaId={}&mfaSendType={}&lang=HE",
-        YEMOT_API_BASE,
-        urlencode(&token),
-        urlencode(&mfa_id),
-        urlencode(&send_type)
-    );
-
-    let json = yemot_get(&url).await?;
+    let json = yemot_post(
+        "MFASession",
+        Some(token.trim()),
+        &[
+            ("action", "sendMFA"),
+            ("mfaId", &mfa_id),
+            ("mfaSendType", &send_type),
+            ("lang", "HE"),
+        ],
+    )
+    .await?;
     let msg = json["message"].as_str().unwrap_or("");
 
     match classify_response(&json) {
@@ -1390,14 +1577,16 @@ pub async fn send_mfa_code(
 /// Validate the MFA code the user received.
 #[tauri::command]
 pub async fn validate_mfa_code(token: String, code: String) -> Result<YemotSimpleResult, String> {
-    let url = format!(
-        "{}MFASession?token={}&action=validMFA&mfaCode={}&mfaRememberMe=false",
-        YEMOT_API_BASE,
-        urlencode(&token),
-        urlencode(&code)
-    );
-
-    let json = yemot_get(&url).await?;
+    let json = yemot_post(
+        "MFASession",
+        Some(token.trim()),
+        &[
+            ("action", "validMFA"),
+            ("mfaCode", &code),
+            ("mfaRememberMe", "false"),
+        ],
+    )
+    .await?;
     let valid_status = json["mfa_valid_status"].as_str().unwrap_or("");
 
     if valid_status == "VALID" {
@@ -1426,28 +1615,16 @@ pub async fn validate_mfa_code(token: String, code: String) -> Result<YemotSimpl
 /// Logout (invalidate the token) — performed locally, never via the script.
 #[tauri::command]
 pub async fn logout_yemot(token: String) -> Result<YemotSimpleResult, String> {
-    let url = format!("{}Logout?token={}", YEMOT_API_BASE, urlencode(&token));
-
-    let res = http()
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("שגיאת רשת: {}", e))?;
-
-    if res.status().is_success() {
-        Ok(YemotSimpleResult {
+    let json = yemot_post("Logout", Some(token.trim()), &[]).await?;
+    match classify_response(&json) {
+        Ok(()) => Ok(YemotSimpleResult {
             success: true,
             message: "התנתקות בוצעה בהצלחה".to_string(),
-        })
-    } else {
-        Ok(YemotSimpleResult {
+        }),
+        Err(e) => Ok(YemotSimpleResult {
             success: false,
-            message: format!(
-                "התנתקות נכשלה ({}): {}",
-                res.status(),
-                res.text().await.unwrap_or_default()
-            ),
-        })
+            message: format!("התנתקות נכשלה: {}", render_error(&e)),
+        }),
     }
 }
 
@@ -1612,6 +1789,7 @@ mod tests {
             ini: ExtIni::parse("; c\ntype=menu\ntitle=בדיקה\n"),
             size: Some(214),
             mtime: Some("01/01/2026 10:00".to_string()),
+            source: ExtSource::File,
         };
         let out = render_ext_read("ivr2:/1/2", &read, DEFAULT_MAX_BYTES);
         assert_eq!(
@@ -1628,6 +1806,7 @@ mod tests {
             ini: ExtIni::parse("a=1\nb=2\nc=3"),
             size: None,
             mtime: None,
+            source: ExtSource::File,
         };
         let out = render_ext_read("ivr2:/1", &read, 8);
         assert!(out.contains("size=- mtime=-"));
@@ -1638,6 +1817,7 @@ mod tests {
             ini: ExtIni::default(),
             size: None,
             mtime: None,
+            source: ExtSource::File,
         };
         let out = render_ext_read("ivr2:/9", &missing, DEFAULT_MAX_BYTES);
         assert!(out.starts_with("ext=/9 exists=false"));
@@ -1743,6 +1923,7 @@ mod tests {
                 ini: ExtIni::parse("type=menu"),
                 size: None,
                 mtime: None,
+                source: ExtSource::File,
             },
         )
         .await;
@@ -1788,6 +1969,133 @@ mod tests {
                 .unwrap_err(),
             YemotError::BadRequest(_)
         ));
+    }
+
+    // -- credentials never travel in a URL ---------------------------------
+
+    #[test]
+    fn credentials_go_in_the_body_never_in_the_url() {
+        let (url, body) = post_parts("Login", &[("username", "077000000"), ("password", "s3cr3t!")]);
+        assert_eq!(url, "https://www.call2all.co.il/ym/api/Login");
+        assert!(!url.contains('?'), "no query string at all: {}", url);
+        assert!(!url.contains("s3cr3t"), "password leaked into the URL: {}", url);
+        assert_eq!(body["password"], json!("s3cr3t!"));
+        assert_eq!(body["username"], json!("077000000"));
+        // the token is a header, never a body/query parameter
+        let (url, body) = post_parts("MFASession", &[("action", "isPass")]);
+        assert!(!url.contains("token"));
+        assert!(body.get("token").is_none());
+    }
+
+    // -- write verification -------------------------------------------------
+
+    #[test]
+    fn empty_value_counts_as_applied_when_the_key_is_gone_or_blank() {
+        assert!(param_applied(None, ""));
+        assert!(param_applied(Some(""), ""));
+        assert!(param_applied(Some("   "), " "));
+        assert!(!param_applied(None, "menu"));
+        assert!(!param_applied(Some("old"), ""));
+    }
+
+    #[test]
+    fn verification_trims_both_sides() {
+        assert!(param_applied(Some("menu"), " menu "));
+        assert!(param_applied(Some(" menu "), "menu"));
+        assert!(!param_applied(Some("menu2"), "menu"));
+    }
+
+    // -- file names ---------------------------------------------------------
+
+    #[test]
+    fn filenames_allow_hebrew_and_reject_the_dangerous_set() {
+        assert!(is_valid_filename("רשימת חברים.txt"));
+        assert!(is_valid_filename("000.wav"));
+        assert!(is_valid_filename("a-b_c.2.ini"));
+        for bad in [
+            "", "ext.ini/", "a/b.txt", "a\\b.txt", "a:b.txt", "a*.txt", "a?.txt",
+            "a\"b.txt", "a<b.txt", "a>b.txt", "a|b.txt", "..txt", "no-extension",
+            ".hidden.txt", "a..b.txt",
+        ] {
+            assert!(!is_valid_filename(bad), "should reject: {:?}", bad);
+        }
+        assert!(!is_valid_filename("a\u{7}b.txt"));
+        assert_eq!(canon_file("/1/רשימה.txt").unwrap(), "ivr2:/1/רשימה.txt");
+    }
+
+    // -- cache source -------------------------------------------------------
+
+    #[tokio::test]
+    async fn listing_seeds_are_marked_and_never_overwrite_a_file_read() {
+        let c = YemotClient::new("t");
+        let dir = json!({"extIni": {"type": "menu"}});
+        c.seed_cache_from_dir("ivr2:/1", &dir).await;
+        let read = c.get_ext_ini("/1").await.unwrap();
+        assert_eq!(read.source, ExtSource::Listing);
+        assert_eq!(read.ini.get("type"), Some("menu"));
+
+        // a real file read wins, and a later listing must not downgrade it
+        c.cache_put(
+            "ivr2:/1",
+            &ExtRead {
+                exists: true,
+                ini: ExtIni::parse("type=menu\ntitle=x"),
+                size: Some(20),
+                mtime: None,
+                source: ExtSource::File,
+            },
+        )
+        .await;
+        c.seed_cache_from_dir("ivr2:/1", &dir).await;
+        let read = c.get_ext_ini("/1").await.unwrap();
+        assert_eq!(read.source, ExtSource::File);
+        assert_eq!(read.ini.get("title"), Some("x"));
+    }
+
+    #[test]
+    fn snapshot_hash_tracks_content_and_existence() {
+        let mk = |exists, text: &str| ExtRead {
+            exists,
+            ini: ExtIni::parse(text),
+            size: None,
+            mtime: None,
+            source: ExtSource::File,
+        };
+        assert_eq!(mk(true, "type=menu").snapshot_hash(), mk(true, "type=menu").snapshot_hash());
+        assert_ne!(mk(true, "type=menu").snapshot_hash(), mk(true, "type=api").snapshot_hash());
+        assert_ne!(mk(true, "").snapshot_hash(), mk(false, "").snapshot_hash());
+    }
+
+    // -- directory files ----------------------------------------------------
+
+    #[test]
+    fn files_from_dir_collects_every_bucket_once() {
+        let v = json!({
+            "dirs": [{"name": "1"}],
+            "files": [{"name": "000.wav", "size": 12, "mtime": "01/01/2026 10:00"}],
+            "ini": [{"name": "ext.ini", "size": 40}],
+            "messages": [{"name": "M0000.wav"}],
+            "html": [{"name": "ext.ini"}]
+        });
+        let files = files_from_dir(&v);
+        let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, vec!["000.wav", "M0000.wav", "ext.ini"]);
+        assert_eq!(files[0].size, Some(12));
+        assert_eq!(files[1].mtime, None);
+        assert!(files_from_dir(&json!({"dirs": []})).is_empty());
+    }
+
+    #[test]
+    fn renders_files() {
+        let files = vec![
+            FileEntry { name: "000.wav".into(), size: Some(12), mtime: Some("01/01/2026".into()) },
+            FileEntry { name: "ext.ini".into(), size: None, mtime: None },
+        ];
+        assert_eq!(
+            render_files("ivr2:/1", &files),
+            "ext=/1 files=2\n000.wav  size=12  mtime=01/01/2026\next.ini  size=-  mtime=-\n"
+        );
+        assert_eq!(render_files("ivr2:/1", &[]), "ext=/1 (אין קבצים)\n");
     }
 
     #[tokio::test]
