@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use futures::future::join_all;
+use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, State};

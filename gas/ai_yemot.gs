@@ -1,5 +1,17 @@
 /**
  * ===================================================================
+ * ⚠️ קוד מורשה קפוא (script mode) — אין פיתוח חדש כאן.
+ * ===================================================================
+ * המסלול העיקרי הוא האפליקציה השולחנית שב-desktop/ (Tauri + Svelte).
+ * הקובץ הזה נשמר לצורך משתמשים קיימים בלבד:
+ *   • אין להוסיף כאן פיצורות — מממשים אותן ב-desktop/.
+ *   • הפריסה (deploy-gas.yml) היא workflow_dispatch ידנית בלבד.
+ *   • תיקוני אבטחה ותקלות קריטיות — כן; כל השאר — לא.
+ * ===================================================================
+ */
+
+/**
+ * ===================================================================
  * AI_yemot - Google Apps Script Backend
  * מערכת AI מתקדמת לעדכון אוטומטי של שלוחות במערכות ימות המשיח
  * ===================================================================
@@ -803,10 +815,13 @@ function fetchWithRetry(url, options) {
 
 function handleNewTopicsAlert(params) {
   const secret = params.secret || params.admin_secret;
-  const expectedSecret = SCRIPT_PROPS['ADMIN_SECRET'] || 'yemot_admin_secret';
+  // fail-closed: בלי ADMIN_SECRET מוגדר ב-Script Properties הבקשה נדחית.
+  const expectedSecret = SCRIPT_PROPS['ADMIN_SECRET'] || '';
 
-  if (!secret || secret !== expectedSecret) {
-    Logger.log("Unauthorized alert attempt.");
+  if (!expectedSecret || !secret || secret !== expectedSecret) {
+    Logger.log(expectedSecret
+      ? "Unauthorized alert attempt."
+      : "ADMIN_SECRET is not configured in Script Properties — alert rejected.");
     return ContentService.createTextOutput(JSON.stringify({
       status: "error",
       message: "Unauthorized: Invalid admin secret"
