@@ -30,6 +30,7 @@ pub fn run() {
             agent::runner::start_agent_run,
             agent::runner::cancel_agent_run,
             agent::runner::approve_actions,
+            agent::runner::undo_action,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

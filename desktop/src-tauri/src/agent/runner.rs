@@ -279,6 +279,85 @@ pub async fn cancel_agent_run(
     }
 }
 
+// --- write safety: applied-once, stale-state, undo ------------------------
+//
+// The per-run write state lives here rather than on `RunHandle` on purpose: an
+// undo must still work after the loop finished and the registry dropped the
+// run, and this keeps `start_agent_run` untouched.
+
+/// Everything needed to reverse one applied action.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UndoRecord {
+    pub action_id: String,
+    /// `set_extension_params` | `upload_text_file`
+    pub kind: String,
+    pub path: String,
+    #[serde(skip)]
+    pub canon_path: String,
+    /// Value each key had before the write; `None` = the key did not exist.
+    pub params: Vec<(String, Option<String>)>,
+    /// Previous file contents (`upload_text_file`); `None` = no file existed.
+    pub contents: Option<String>,
+}
+
+struct RunWriteState {
+    applied: HashSet<String>,
+    undo: HashMap<String, UndoRecord>,
+    client: Arc<YemotClient>,
+    at: Instant,
+}
+
+static WRITE_STATE: std::sync::OnceLock<Mutex<HashMap<String, RunWriteState>>> =
+    std::sync::OnceLock::new();
+
+/// How long a finished run keeps its undo records.
+const UNDO_RETENTION: Duration = Duration::from_secs(60 * 60);
+
+fn write_state() -> &'static Mutex<HashMap<String, RunWriteState>> {
+    WRITE_STATE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Ids of `wanted` that were already applied in this run, and the ids that are
+/// still free to write (which are marked applied on the spot, so two clicks of
+/// "בצע" cannot both get through).
+async fn claim_ids(run_id: &str, client: &Arc<YemotClient>, wanted: &[String]) -> HashSet<String> {
+    let mut map = write_state().lock().await;
+    map.retain(|_, s| s.at.elapsed() < UNDO_RETENTION);
+    let state = map.entry(run_id.to_string()).or_insert_with(|| RunWriteState {
+        applied: HashSet::new(),
+        undo: HashMap::new(),
+        client: client.clone(),
+        at: Instant::now(),
+    });
+    state.at = Instant::now();
+    let mut already = HashSet::new();
+    for id in wanted {
+        if !state.applied.insert(id.clone()) {
+            already.insert(id.clone());
+        }
+    }
+    already
+}
+
+async fn record_undo(run_id: &str, records: Vec<UndoRecord>) {
+    let mut map = write_state().lock().await;
+    if let Some(state) = map.get_mut(run_id) {
+        for r in records {
+            state.undo.insert(r.action_id.clone(), r);
+        }
+    }
+}
+
+/// Release an id so it can be applied again (after a refusal, or an undo).
+async fn release_ids(run_id: &str, ids: &[String]) {
+    let mut map = write_state().lock().await;
+    if let Some(state) = map.get_mut(run_id) {
+        for id in ids {
+            state.applied.remove(id);
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn approve_actions(
     app: AppHandle,
@@ -300,15 +379,167 @@ pub async fn approve_actions(
     if actions.is_empty() {
         return Err("לא נבחרו פעולות לביצוע".to_string());
     }
-    let results = apply_actions(&client, &actions).await;
+
+    // Approving the same action twice would apply the write twice — and the
+    // second time against a file the first one already changed.
+    let ids: Vec<String> = actions.iter().map(|a| a.id.clone()).collect();
+    let already = claim_ids(&run_id, &client, &ids).await;
+    let fresh: Vec<ProposedAction> = actions
+        .iter()
+        .filter(|a| !already.contains(&a.id))
+        .cloned()
+        .collect();
+
+    let (mut results, undo, refused) = apply_actions(&client, &fresh).await;
+    record_undo(&run_id, undo).await;
+    if !refused.is_empty() {
+        release_ids(&run_id, &refused).await;
+    }
+    for id in already {
+        results.push(ActionApplyResult {
+            action_id: id,
+            ok: false,
+            message: "כבר בוצע".to_string(),
+            params: Vec::new(),
+            undo: None,
+        });
+    }
+
     for r in &results {
         events::action_applied(&app, &run_id, r);
     }
     Ok(results)
 }
 
+/// Undo one applied action: write the previous values back.
+///
+/// Limitation: Yemot's `UpdateExtension` documents no way to *delete* a key, so
+/// a key that did not exist before the write is restored as an empty value
+/// (`key=`), not removed. A file that did not exist before an `upload_text_file`
+/// is not deleted either — file deletion (`FileAction`) is a denied capability.
+#[tauri::command]
+pub async fn undo_action(run_id: String, action_id: String) -> Result<ActionApplyResult, String> {
+    let (client, record) = {
+        let map = write_state().lock().await;
+        let state = map
+            .get(&run_id)
+            .ok_or_else(|| "אין מידע לביטול עבור ריצה זו".to_string())?;
+        let record = state
+            .undo
+            .get(&action_id)
+            .cloned()
+            .ok_or_else(|| "לא נמצאה פעולה לביטול".to_string())?;
+        (state.client.clone(), record)
+    };
+
+    let result = if record.kind == "upload_text_file" {
+        match record.contents.clone() {
+            Some(previous) => match client.upload_text_file(&record.canon_path, &previous).await {
+                Ok(_) => ActionApplyResult {
+                    action_id: action_id.clone(),
+                    ok: true,
+                    message: format!("התוכן הקודם של {} שוחזר", record.path),
+                    params: Vec::new(),
+                    undo: None,
+                },
+                Err(e) => ActionApplyResult {
+                    action_id: action_id.clone(),
+                    ok: false,
+                    message: yemot::render_error(&e),
+                    params: Vec::new(),
+                    undo: None,
+                },
+            },
+            None => ActionApplyResult {
+                action_id: action_id.clone(),
+                ok: false,
+                message: format!(
+                    "הקובץ {} לא היה קיים לפני הפעולה, ומחיקת קבצים אינה נתמכת ביישום. מחק אותו ידנית בממשק ימות המשיח.",
+                    record.path
+                ),
+                params: Vec::new(),
+                undo: None,
+            },
+        }
+    } else {
+        let params: Vec<(String, String)> = record
+            .params
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone().unwrap_or_default()))
+            .collect();
+        if params.is_empty() {
+            return Err("אין ערכים קודמים לשחזור".to_string());
+        }
+        let created: Vec<&str> = record
+            .params
+            .iter()
+            .filter(|(_, v)| v.is_none())
+            .map(|(k, _)| k.as_str())
+            .collect();
+        match client.update_extension(&record.canon_path, &params).await {
+            Ok(outcomes) => {
+                let ok = outcomes.iter().all(|o| o.applied);
+                let mut message = yemot::render_outcomes(&record.canon_path, &outcomes);
+                if !created.is_empty() {
+                    message.push_str(&format!(
+                        "הערה: המפתחות {} לא היו קיימים לפני הפעולה ונכתבו כערך ריק — ימות המשיח אינה מאפשרת מחיקת מפתח דרך ה-API.\n",
+                        created.join(", ")
+                    ));
+                }
+                ActionApplyResult {
+                    action_id: action_id.clone(),
+                    ok,
+                    message,
+                    params: outcomes,
+                    undo: None,
+                }
+            }
+            Err(e) => ActionApplyResult {
+                action_id: action_id.clone(),
+                ok: false,
+                message: yemot::render_error(&e),
+                params: Vec::new(),
+                undo: None,
+            },
+        }
+    };
+
+    if result.ok {
+        // An undone action may be approved again.
+        release_ids(&run_id, std::slice::from_ref(&action_id)).await;
+        let mut map = write_state().lock().await;
+        if let Some(state) = map.get_mut(&run_id) {
+            state.undo.remove(&action_id);
+        }
+    }
+    Ok(result)
+}
+
+/// Undo values for one `set_extension_params` action, taken from the diff that
+/// was shown to the user (`before = None` means the key was absent).
+fn undo_params_of(a: &ProposedAction) -> Vec<(String, Option<String>)> {
+    a.params
+        .iter()
+        .map(|p| {
+            let before = a
+                .diff
+                .iter()
+                .find(|d| d.key == p.key)
+                .and_then(|d| d.before.clone());
+            (p.key.clone(), before)
+        })
+        .collect()
+}
+
 /// Group by extension so each path costs exactly one `UpdateExtension`.
-async fn apply_actions(client: &YemotClient, actions: &[ProposedAction]) -> Vec<ActionApplyResult> {
+///
+/// Returns the per-action results, the undo records of what actually got
+/// written, and the ids that were refused before touching the server (so the
+/// caller can let them be approved again).
+async fn apply_actions(
+    client: &YemotClient,
+    actions: &[ProposedAction],
+) -> (Vec<ActionApplyResult>, Vec<UndoRecord>, Vec<String>) {
     // Preserve first-seen path order; last value wins per key.
     let mut order: Vec<String> = Vec::new();
     let mut grouped: HashMap<String, Vec<(String, String)>> = HashMap::new();
@@ -326,8 +557,33 @@ async fn apply_actions(client: &YemotClient, actions: &[ProposedAction]) -> Vec<
         }
     }
 
+    // Stale-state check: the proposal was built against a snapshot of ext.ini.
+    // If the file changed on the server since (another session, the web UI, an
+    // earlier approval), the merge the user approved is no longer the merge
+    // that would happen — refuse instead of writing over the change.
+    let mut stale: HashSet<String> = HashSet::new();
+    for path in &order {
+        let expected: Vec<&String> = actions
+            .iter()
+            .filter(|a| &a.canon_path == path && a.kind == "set_extension_params")
+            .filter_map(|a| a.snapshot_hash.as_ref())
+            .collect();
+        if expected.is_empty() {
+            continue;
+        }
+        if let Ok(now) = client.get_ext_ini_fresh(path).await {
+            let current = now.snapshot_hash();
+            if expected.iter().any(|h| **h != current) {
+                stale.insert(path.clone());
+            }
+        }
+    }
+
     let mut per_path: HashMap<String, Result<Vec<ParamOutcome>, String>> = HashMap::new();
     for path in &order {
+        if stale.contains(path) {
+            continue;
+        }
         let params = grouped.get(path).cloned().unwrap_or_default();
         let res = client
             .update_extension(path, &params)
@@ -337,23 +593,56 @@ async fn apply_actions(client: &YemotClient, actions: &[ProposedAction]) -> Vec<
     }
 
     let mut out = Vec::new();
+    let mut undo = Vec::new();
+    let mut refused = Vec::new();
     for a in actions {
         if a.kind == "upload_text_file" {
             let contents = a.contents.clone().unwrap_or_default();
             let r = client.upload_text_file(&a.canon_path, &contents).await;
             out.push(match r {
-                Ok(_) => ActionApplyResult {
-                    action_id: a.id.clone(),
-                    ok: true,
-                    message: format!("הקובץ {} נכתב", a.path),
-                    params: Vec::new(),
-                },
-                Err(e) => ActionApplyResult {
-                    action_id: a.id.clone(),
-                    ok: false,
-                    message: yemot::render_error(&e),
-                    params: Vec::new(),
-                },
+                Ok(previous) => {
+                    let record = UndoRecord {
+                        action_id: a.id.clone(),
+                        kind: a.kind.clone(),
+                        path: a.path.clone(),
+                        canon_path: a.canon_path.clone(),
+                        params: Vec::new(),
+                        // What the server had a moment ago beats what the
+                        // proposal saw; fall back to the proposal's snapshot.
+                        contents: previous.or_else(|| a.previous.clone()),
+                    };
+                    let undo_json = serde_json::to_value(&record).ok();
+                    undo.push(record);
+                    ActionApplyResult {
+                        action_id: a.id.clone(),
+                        ok: true,
+                        message: format!("הקובץ {} נכתב", a.path),
+                        params: Vec::new(),
+                        undo: undo_json,
+                    }
+                }
+                Err(e) => {
+                    refused.push(a.id.clone());
+                    ActionApplyResult {
+                        action_id: a.id.clone(),
+                        ok: false,
+                        message: yemot::render_error(&e),
+                        params: Vec::new(),
+                        undo: None,
+                    }
+                }
+            });
+            continue;
+        }
+
+        if stale.contains(&a.canon_path) {
+            refused.push(a.id.clone());
+            out.push(ActionApplyResult {
+                action_id: a.id.clone(),
+                ok: false,
+                message: "הקובץ השתנה בשרת מאז ההצעה, הרץ שוב".to_string(),
+                params: Vec::new(),
+                undo: None,
             });
             continue;
         }
@@ -366,28 +655,52 @@ async fn apply_actions(client: &YemotClient, actions: &[ProposedAction]) -> Vec<
                     .filter_map(|p| outcomes.iter().find(|o| o.key == p.key).cloned())
                     .collect();
                 let ok = !mine.is_empty() && mine.iter().all(|o| o.applied);
+                let mut undo_json = None;
+                if ok {
+                    let record = UndoRecord {
+                        action_id: a.id.clone(),
+                        kind: a.kind.clone(),
+                        path: a.path.clone(),
+                        canon_path: a.canon_path.clone(),
+                        params: undo_params_of(a),
+                        contents: None,
+                    };
+                    undo_json = serde_json::to_value(&record).ok();
+                    undo.push(record);
+                } else {
+                    refused.push(a.id.clone());
+                }
                 out.push(ActionApplyResult {
                     action_id: a.id.clone(),
                     ok,
                     message: yemot::render_outcomes(&a.canon_path, &mine),
                     params: mine,
+                    undo: undo_json,
                 });
             }
-            Some(Err(msg)) => out.push(ActionApplyResult {
-                action_id: a.id.clone(),
-                ok: false,
-                message: msg.clone(),
-                params: Vec::new(),
-            }),
-            None => out.push(ActionApplyResult {
-                action_id: a.id.clone(),
-                ok: false,
-                message: "הפעולה לא נמצאה".to_string(),
-                params: Vec::new(),
-            }),
+            Some(Err(msg)) => {
+                refused.push(a.id.clone());
+                out.push(ActionApplyResult {
+                    action_id: a.id.clone(),
+                    ok: false,
+                    message: msg.clone(),
+                    params: Vec::new(),
+                    undo: None,
+                });
+            }
+            None => {
+                refused.push(a.id.clone());
+                out.push(ActionApplyResult {
+                    action_id: a.id.clone(),
+                    ok: false,
+                    message: "הפעולה לא נמצאה".to_string(),
+                    params: Vec::new(),
+                    undo: None,
+                });
+            }
         }
     }
-    out
+    (out, undo, refused)
 }
 
 // ---------------------------------------------------------------------------
@@ -429,6 +742,7 @@ async fn run_loop(ctx: RunContext, provider: Box<dyn Provider>) {
         client: ctx.client.clone(),
         auto_apply: ctx.auto_apply,
         reads: Arc::new(Mutex::new(HashSet::new())),
+        ext_reads: Arc::new(Mutex::new(HashMap::new())),
         proposed: ctx.proposed.clone(),
         action_seq: Arc::new(AtomicUsize::new(0)),
         session_error: Arc::new(Mutex::new(None)),
@@ -908,6 +1222,8 @@ pub fn legacy_actions_from_text(text: &str) -> Vec<ProposedAction> {
                 exists: false,
                 diff: Vec::new(),
                 warnings: vec!["נוצר מטקסט חופשי של המודל, ללא בדיקת מצב קיים".to_string()],
+                previous: None,
+                snapshot_hash: None,
             })
         })
         .collect()
@@ -1139,6 +1455,96 @@ mod tests {
     fn context_limits_are_ordered() {
         assert_eq!(CONTEXT_SOFT_LIMIT, 60_000);
         assert_eq!(CONTEXT_HARD_LIMIT, 150_000);
+    }
+
+    // -- write safety ------------------------------------------------------
+
+    fn action_with_diff() -> ProposedAction {
+        ProposedAction {
+            id: "a_1".into(),
+            tool_use_id: "toolu_1".into(),
+            kind: "set_extension_params".into(),
+            path: "/3".into(),
+            canon_path: "ivr2:/3".into(),
+            params: vec![
+                ActionParam { key: "type".into(), value: "menu".into() },
+                ActionParam { key: "title".into(), value: "חדש".into() },
+            ],
+            contents: None,
+            reason: "בדיקה".into(),
+            risk: "overwrite".into(),
+            exists: true,
+            diff: vec![
+                super::events::DiffRowDto {
+                    key: "type".into(),
+                    before: Some("playfile".into()),
+                    after: "menu".into(),
+                    kind: "changed".into(),
+                },
+                super::events::DiffRowDto {
+                    key: "title".into(),
+                    before: None,
+                    after: "חדש".into(),
+                    kind: "new".into(),
+                },
+            ],
+            warnings: vec![],
+            previous: None,
+            snapshot_hash: Some("true:abc".into()),
+        }
+    }
+
+    #[test]
+    fn undo_values_come_from_the_diff_the_user_saw() {
+        let undo = undo_params_of(&action_with_diff());
+        assert_eq!(undo[0], ("type".to_string(), Some("playfile".to_string())));
+        // a key that did not exist has no previous value
+        assert_eq!(undo[1], ("title".to_string(), None));
+    }
+
+    #[tokio::test]
+    async fn an_action_can_only_be_claimed_once() {
+        let run = format!("r_test_{}", new_run_id());
+        let client = Arc::new(YemotClient::new("t"));
+        let ids = vec!["a_1".to_string(), "a_2".to_string()];
+
+        assert!(claim_ids(&run, &client, &ids).await.is_empty());
+        let second = claim_ids(&run, &client, &ids).await;
+        assert_eq!(second.len(), 2, "a second approval must be refused");
+
+        // a refused / undone action becomes available again
+        release_ids(&run, &["a_1".to_string()]).await;
+        let third = claim_ids(&run, &client, &ids).await;
+        assert_eq!(third, HashSet::from(["a_2".to_string()]));
+
+        write_state().lock().await.remove(&run);
+    }
+
+    #[tokio::test]
+    async fn undo_records_are_kept_per_action() {
+        let run = format!("r_test_{}", new_run_id());
+        let client = Arc::new(YemotClient::new("t"));
+        claim_ids(&run, &client, &["a_1".to_string()]).await;
+        record_undo(
+            &run,
+            vec![UndoRecord {
+                action_id: "a_1".into(),
+                kind: "set_extension_params".into(),
+                path: "/3".into(),
+                canon_path: "ivr2:/3".into(),
+                params: vec![("type".into(), Some("playfile".into()))],
+                contents: None,
+            }],
+        )
+        .await;
+        let map = write_state().lock().await;
+        let state = map.get(&run).unwrap();
+        assert_eq!(state.undo["a_1"].params[0].1.as_deref(), Some("playfile"));
+        // the canonical path stays internal, like everywhere else
+        let v = serde_json::to_value(&state.undo["a_1"]).unwrap();
+        assert!(v.get("canon_path").is_none());
+        drop(map);
+        write_state().lock().await.remove(&run);
     }
 
     #[test]

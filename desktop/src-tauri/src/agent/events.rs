@@ -62,6 +62,14 @@ pub struct ProposedAction {
     pub exists: bool,
     pub diff: Vec<DiffRowDto>,
     pub warnings: Vec<String>,
+    /// Previous contents of the file an `upload_text_file` would overwrite
+    /// (`None` when the file does not exist) — the UI diff and the undo.
+    #[serde(default)]
+    pub previous: Option<String>,
+    /// Fingerprint of the `ext.ini` as read when the action was proposed; the
+    /// approval refuses to write when the file changed on the server since.
+    #[serde(default)]
+    pub snapshot_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +78,10 @@ pub struct ActionApplyResult {
     pub ok: bool,
     pub message: String,
     pub params: Vec<ParamOutcome>,
+    /// What `undo_action` would restore (`runner::UndoRecord`), or `None` when
+    /// the action cannot be undone.
+    #[serde(default)]
+    pub undo: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -231,6 +243,8 @@ mod tests {
                 kind: "changed".into(),
             }],
             warnings: vec![],
+            previous: None,
+            snapshot_hash: Some("true:1234".into()),
         };
         let v = serde_json::to_value(&a).unwrap();
         for f in [

@@ -47,6 +47,10 @@ pub struct DiffRow {
 impl ExtIni {
     /// Parse ini text. Never fails: anything unrecognised is kept as a comment.
     pub fn parse(input: &str) -> ExtIni {
+        // A UTF-8 BOM would glue itself to the first key ("\u{feff}type"), so
+        // every lookup of that key would silently miss. Drop it on the way in;
+        // `to_text` therefore never writes one back.
+        let input = input.strip_prefix('\u{feff}').unwrap_or(input);
         let mut lines = Vec::new();
         for raw_line in input.split('\n') {
             // Tolerate CRLF: the `\r` belongs to the terminator, not the value.
@@ -259,6 +263,18 @@ mod tests {
         assert_eq!(rows[1].before.as_deref(), Some("old"));
         assert_eq!(rows[2].kind, DiffKind::New);
         assert_eq!(rows[2].before, None);
+    }
+
+    #[test]
+    fn strips_a_leading_bom() {
+        let ini = ExtIni::parse("\u{feff}type=menu\ntitle=בדיקה\n");
+        assert_eq!(ini.get("type"), Some("menu"));
+        assert_eq!(ini.key_count(), 2);
+        let text = ini.to_text();
+        assert!(!text.contains('\u{feff}'));
+        assert_eq!(text, "type=menu\ntitle=בדיקה");
+        // a BOM in the middle of the file is content, not an encoding marker
+        assert_eq!(ExtIni::parse("a=1\n\u{feff}b=2").get("b"), None);
     }
 
     #[test]
