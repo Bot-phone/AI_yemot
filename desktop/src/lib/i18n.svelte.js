@@ -198,7 +198,41 @@ export const LOCALES = {
       results_title: "תוצאות הביצוע",
       kind_set_params: "עדכון פרמטרים",
       kind_upload_file: "העלאת קובץ טקסט",
-      no_run_id: "אין ריצה פעילה"
+      no_run_id: "אין ריצה פעילה",
+
+      // ----- Onboarding & settings -----
+      onboarding_title: "2 צעדים להתחלה",
+      onboarding_step_token: "התחברות למערכת ימות המשיח ויצירת טוקן",
+      onboarding_step_api_key: "הזנת מפתח API אישי של ספק ה-AI",
+      onboarding_open_login: "התחברות עכשיו",
+      advanced_settings: "הגדרות מתקדמות",
+      secrets_note: "הטוקן והמפתחות נשמרים במאגר הסודות של מערכת ההפעלה, לא בקובץ טקסט",
+
+      // ----- Approval panel -----
+      select_all: "סמן הכל",
+      clear_all: "נקה הכל",
+      approve_selected_count: "בצע {count} פעולות שנבחרו",
+      confirm_risky_title: "אישור שינוי משמעותי",
+      confirm_risky_line:
+        "אתה עומד לשנות {settings} הגדרות ב-{paths} שלוחות, מתוכן {overwrites} דריסות של ערכים קיימים.",
+      confirm_risky_approve: "אני מאשר — בצע",
+      action_already_applied: "בוצע",
+      undo_action: "בטל שינוי",
+      undo_done: "השינוי בוטל",
+      undo_unavailable: "ביטול השינוי אינו זמין בגרסה זו",
+      undo_previous: "ערך קודם",
+
+      // ----- Run feedback -----
+      agent_elapsed: "{secs} שנ׳",
+      retry_run: "נסה שוב",
+      prompt_submit_hint: "Ctrl+Enter (או Cmd+Enter) לשליחה",
+      copy_code: "העתק",
+      copied: "הועתק",
+      copy_output: "העתק תשובה",
+
+      // ----- Accessibility -----
+      close: "סגור",
+      back: "חזור"
     }
   },
   en: {
@@ -390,7 +424,41 @@ export const LOCALES = {
       results_title: "Execution results",
       kind_set_params: "Update parameters",
       kind_upload_file: "Upload text file",
-      no_run_id: "No active run"
+      no_run_id: "No active run",
+
+      // ----- Onboarding & settings -----
+      onboarding_title: "2 steps to get started",
+      onboarding_step_token: "Sign in to Yemot HaMashiach and create a token",
+      onboarding_step_api_key: "Enter your personal AI provider API key",
+      onboarding_open_login: "Sign in now",
+      advanced_settings: "Advanced settings",
+      secrets_note: "The token and keys are kept in the operating system's credential store, not in a text file",
+
+      // ----- Approval panel -----
+      select_all: "Select all",
+      clear_all: "Clear all",
+      approve_selected_count: "Run {count} selected actions",
+      confirm_risky_title: "Confirm a significant change",
+      confirm_risky_line:
+        "You are about to change {settings} settings across {paths} extensions, {overwrites} of them overwriting existing values.",
+      confirm_risky_approve: "I confirm — run it",
+      action_already_applied: "Applied",
+      undo_action: "Undo change",
+      undo_done: "The change was undone",
+      undo_unavailable: "Undo is not available in this version",
+      undo_previous: "Previous value",
+
+      // ----- Run feedback -----
+      agent_elapsed: "{secs}s",
+      retry_run: "Try again",
+      prompt_submit_hint: "Ctrl+Enter (or Cmd+Enter) to submit",
+      copy_code: "Copy",
+      copied: "Copied",
+      copy_output: "Copy answer",
+
+      // ----- Accessibility -----
+      close: "Close",
+      back: "Back"
     }
   }
 };
@@ -422,6 +490,21 @@ function currentLocale() {
   return LOCALES[i18n.locale] ?? LOCALES[DEFAULT_LOCALE];
 }
 
+/** Keys already reported by `warnMissingKey`, so the console stays readable. */
+const warnedKeys = new Set();
+
+/**
+ * In development, tell the developer once about a key that has no translation
+ * in either the active or the default language.
+ * @param {string} key
+ */
+function warnMissingKey(key) {
+  if (!import.meta.env?.DEV) return;
+  if (warnedKeys.has(key)) return;
+  warnedKeys.add(key);
+  console.warn(`[i18n] missing translation key: "${key}"`);
+}
+
 /**
  * Translate a key in the current language (falls back to the default
  * language, then to the key itself). Supports {param} interpolation.
@@ -430,10 +513,11 @@ function currentLocale() {
  * @returns {string}
  */
 export function t(key, params) {
-  let text =
-    currentLocale().strings[key] ??
-    LOCALES[DEFAULT_LOCALE].strings[key] ??
-    key;
+  const active = currentLocale().strings[key];
+  const fallback = LOCALES[DEFAULT_LOCALE].strings[key];
+  if (active === undefined && fallback === undefined) warnMissingKey(key);
+  else if (active === undefined) warnMissingKey(`${key} (${i18n.locale})`);
+  let text = active ?? fallback ?? key;
   if (params) {
     for (const [k, v] of Object.entries(params)) {
       text = text.replaceAll(`{${k}}`, String(v));

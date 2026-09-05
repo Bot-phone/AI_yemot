@@ -1,6 +1,7 @@
 mod agent;
 mod ai;
 mod knowledge;
+mod secrets;
 mod updater;
 mod yemot;
 mod yemot_ini;
@@ -30,6 +31,7 @@ pub fn run() {
             agent::runner::start_agent_run,
             agent::runner::cancel_agent_run,
             agent::runner::approve_actions,
+            secrets::secret_set, secrets::secret_get, secrets::secret_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
