@@ -524,7 +524,8 @@ fn ini_from_object(obj: &Map<String, Value>) -> ExtIni {
     ExtIni { lines }
 }
 
-fn natural_key(path: &str) -> Vec<u64> {
+/// Sort key for an extension path: `/10` after `/2`, never lexically.
+pub fn natural_key(path: &str) -> Vec<u64> {
     display_path(path)
         .split('/')
         .filter(|s| !s.is_empty())
