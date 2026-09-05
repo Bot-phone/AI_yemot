@@ -70,6 +70,10 @@ jobs:
         working-directory: desktop/src-tauri
         run: cargo test --lib
 
+      - name: Rust lint
+        working-directory: desktop/src-tauri
+        run: cargo clippy --lib -- -D warnings
+
       - name: Frontend install
         working-directory: desktop
         run: npm ci
