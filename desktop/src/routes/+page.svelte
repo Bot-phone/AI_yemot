@@ -689,6 +689,15 @@
       listen("agent:text_delta", (event) => {
         const p = /** @type {any} */ (event.payload);
         if (!isCurrentRun(p)) return;
+        if (p.reset) {
+          // The attempt that streamed this block failed; the retry starts over,
+          // so drop the partial text instead of appending onto it.
+          const open = agentTimeline[agentTimeline.length - 1];
+          if (open && open.type === "text" && open.streaming) {
+            agentTimeline = agentTimeline.slice(0, -1);
+          }
+          return;
+        }
         if (!p.delta) return;
         const last = agentTimeline[agentTimeline.length - 1];
         if (last && last.type === "text" && last.streaming) {

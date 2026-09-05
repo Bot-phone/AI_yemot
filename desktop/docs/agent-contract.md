@@ -54,7 +54,8 @@ Provided by `yemot.rs` (see that module). Used by the UI for manual edits / diff
 |---|---|
 | `agent:started` | `{ run_id, provider, model }` |
 | `agent:turn_start` | `{ run_id, turn, max_turns }` |
-| `agent:assistant_text` | `{ run_id, turn, text }` (full text block; streaming deltas come later as `agent:text_delta { run_id, delta }`) |
+| `agent:assistant_text` | `{ run_id, turn, text }` — the authoritative full text block, sent once the turn is complete |
+| `agent:text_delta` | `{ run_id, delta }` — one batch of streamed text; `{ run_id, delta: "", reset: true }` discards the partial block before a retry |
 | `agent:tool_started` | `{ run_id, tool_use_id, name, label }` — `label` is a short Hebrew description, e.g. `חיפוש ידע: תפריט` |
 | `agent:tool_finished` | `{ run_id, tool_use_id, ok, summary, ms }` — `summary` ≤ 120 chars, never raw file content |
 | `agent:action_proposed` | `{ run_id, action: ProposedAction }` |
@@ -63,6 +64,26 @@ Provided by `yemot.rs` (see that module). Used by the UI for manual edits / diff
 | `agent:retry` | `{ run_id, attempt, max, reason, wait_ms }` |
 | `agent:finished` | `{ run_id, ok, stop, final_text, usage }` — `stop ∈ end_turn, max_turns, cancelled, error, truncated, refusal` |
 | `agent:error` | `{ run_id, code, message }` — `code ∈ session_expired, auth, bad_request, network, provider, internal` |
+
+### Streaming
+
+Every provider streams its turn over SSE (Anthropic `stream: true`, OpenAI-compatible
+`stream: true` + `stream_options.include_usage`, Gemini `streamGenerateContent?alt=sse`)
+and the runner forwards the text as `agent:text_delta`, batched to at most one event
+per ~60ms or ~40 characters. The loop itself is unchanged: it still receives one
+complete response per turn (tool calls, usage, stop reason) once the stream ends.
+
+Rules the UI relies on:
+
+* Deltas carry **answer text only** — never thinking / thought summaries.
+* `agent:text_delta` text is not valid markdown until the block closes, so the UI
+  renders it escaped and only runs markdown once `agent:assistant_text` (or
+  `agent:finished`) finalizes the block. `assistant_text` **replaces** the streamed
+  text rather than appending, so a dropped delta cannot corrupt the transcript.
+* A retry re-streams the turn, preceded by `{ delta: "", reset: true }`.
+* If the endpoint answers the streaming request with a 4xx (a custom gateway with
+  no SSE support), the turn is retried once without streaming — no deltas, the
+  same `assistant_text` at the end.
 
 ```jsonc
 // ProposedAction

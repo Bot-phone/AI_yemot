@@ -17,7 +17,8 @@ use super::super::types::{
     ToolSpec, Usage,
 };
 use super::{
-    call_with_deadline, classify_reqwest, classify_status, http_ai, retry_after_of, Provider,
+    call_with_deadline, classify_reqwest, classify_status, http_ai, retry_after_of, short, sse_data,
+    DeltaBatch, DeltaSink, LineReader, Provider,
 };
 
 const MAX_OUTPUT_TOKENS: u64 = 8192;
@@ -38,21 +39,41 @@ impl Gemini {
     }
 
     fn url(&self) -> String {
+        self.url_for("generateContent")
+    }
+
+    /// The streaming endpoint is the same URL with a different method and
+    /// `alt=sse` (without it the response is a JSON array, not an event stream).
+    fn stream_url(&self) -> String {
+        let u = self.url_for("streamGenerateContent");
+        if u.contains("alt=sse") {
+            u
+        } else {
+            format!("{}&alt=sse", u)
+        }
+    }
+
+    fn url_for(&self, method: &str) -> String {
         if self.base_url.is_empty() {
             format!(
-                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-                self.model, self.api_key
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:{}?key={}",
+                self.model, method, self.api_key
             )
         } else if self.base_url.ends_with(":generateContent") {
+            let base = self
+                .base_url
+                .trim_end_matches(":generateContent")
+                .to_string();
+            let base = format!("{}:{}", base, method);
             if self.base_url.contains("key=") {
-                self.base_url.clone()
+                base
             } else {
-                format!("{}?key={}", self.base_url, self.api_key)
+                format!("{}?key={}", base, self.api_key)
             }
         } else {
             format!(
-                "{}/models/{}:generateContent?key={}",
-                self.base_url, self.model, self.api_key
+                "{}/models/{}:{}?key={}",
+                self.base_url, self.model, method, self.api_key
             )
         }
     }
@@ -230,28 +251,123 @@ pub fn parse_response(json: &Value, turn: u32) -> ProviderResponse {
         }
     }
 
-    let finish = json["candidates"][0]["finishReason"].as_str();
-    let um = json.get("usageMetadata");
+    ProviderResponse {
+        content,
+        stop: parse_stop(json["candidates"][0]["finishReason"].as_str()),
+        usage: parse_usage(json.get("usageMetadata")),
+    }
+}
+
+pub fn parse_stop(finish: Option<&str>) -> StopReason {
+    match finish {
+        Some("STOP") | None => StopReason::EndTurn,
+        Some("MAX_TOKENS") => StopReason::MaxTokens,
+        Some("SAFETY") | Some("PROHIBITED_CONTENT") | Some("BLOCKLIST") => StopReason::Refusal,
+        Some(o) => StopReason::Other(o.to_string()),
+    }
+}
+
+pub fn parse_usage(um: Option<&Value>) -> Usage {
     let n = |k: &str| -> u64 {
         um.and_then(|u| u.get(k)).and_then(|v| v.as_u64()).unwrap_or(0)
     };
     let cached = n("cachedContentTokenCount");
+    Usage {
+        input: n("promptTokenCount").saturating_sub(cached),
+        // thoughtsTokenCount is billed as output but reported separately.
+        output: n("candidatesTokenCount") + n("thoughtsTokenCount"),
+        cache_read: cached,
+        cache_write: 0,
+    }
+}
 
-    ProviderResponse {
-        content,
-        stop: match finish {
-            Some("STOP") | None => StopReason::EndTurn,
-            Some("MAX_TOKENS") => StopReason::MaxTokens,
-            Some("SAFETY") | Some("PROHIBITED_CONTENT") | Some("BLOCKLIST") => StopReason::Refusal,
-            Some(o) => StopReason::Other(o.to_string()),
-        },
-        usage: Usage {
-            input: n("promptTokenCount").saturating_sub(cached),
-            // thoughtsTokenCount is billed as output but reported separately.
-            output: n("candidatesTokenCount") + n("thoughtsTokenCount"),
-            cache_read: cached,
-            cache_write: 0,
-        },
+// ---------------------------------------------------------------------------
+// SSE accumulator
+// ---------------------------------------------------------------------------
+
+/// `streamGenerateContent?alt=sse` sends whole `GenerateContentResponse`
+/// objects, each holding the *next* slice of the candidate — text arrives
+/// split across parts and a `functionCall` arrives whole, in its own chunk.
+#[derive(Default)]
+pub struct StreamAcc {
+    text: String,
+    calls: Vec<(String, Value)>,
+    finish_reason: Option<String>,
+    usage: Usage,
+}
+
+impl StreamAcc {
+    pub fn feed_line(
+        &mut self,
+        line: &str,
+        deltas: &mut DeltaBatch<'_>,
+    ) -> Result<(), ProviderError> {
+        let Some(data) = sse_data(line) else {
+            return Ok(());
+        };
+        let Ok(chunk) = serde_json::from_str::<Value>(data) else {
+            return Ok(());
+        };
+        if let Some(err) = chunk.get("error") {
+            // Not `BadRequest`: that verdict belongs to the HTTP status, where
+            // it means "this endpoint has no SSE, retry unstreamed".
+            return Err(ProviderError::Transient(short(&err.to_string())));
+        }
+        if let Some(parts) = chunk["candidates"][0]["content"]["parts"].as_array() {
+            for p in parts {
+                if let Some(t) = p.get("text").and_then(|v| v.as_str()) {
+                    // A thought summary is not the answer; never stream it.
+                    if p.get("thought").and_then(|v| v.as_bool()) != Some(true) {
+                        self.text.push_str(t);
+                        deltas.push(t);
+                    }
+                }
+                if let Some(fc) = p.get("functionCall") {
+                    self.calls.push((
+                        fc.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        fc.get("args").cloned().unwrap_or_else(|| json!({})),
+                    ));
+                }
+            }
+        }
+        if let Some(f) = chunk["candidates"][0]["finishReason"].as_str() {
+            self.finish_reason = Some(f.to_string());
+        }
+        // Every chunk restates the totals; the last one wins.
+        if let Some(um) = chunk.get("usageMetadata") {
+            if !um.is_null() {
+                self.usage = parse_usage(Some(um));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn has_content(&self) -> bool {
+        !self.text.trim().is_empty() || !self.calls.is_empty()
+    }
+
+    pub fn finish(self, turn: u32, aborted: bool) -> ProviderResponse {
+        let mut content = Vec::new();
+        if !self.text.trim().is_empty() {
+            content.push(ContentBlock::Text(self.text));
+        }
+        for (i, (name, args)) in self.calls.into_iter().enumerate() {
+            content.push(ContentBlock::ToolUse {
+                id: mint_id(turn, i),
+                name,
+                input: args,
+            });
+        }
+        let stop = if aborted && self.finish_reason.is_none() {
+            StopReason::Other("stream_incomplete".to_string())
+        } else {
+            parse_stop(self.finish_reason.as_deref())
+        };
+        ProviderResponse {
+            content,
+            stop,
+            usage: self.usage,
+        }
     }
 }
 
@@ -267,13 +383,91 @@ impl Provider for Gemini {
         &self,
         req: &ProviderRequest,
         cancel: &CancellationToken,
+        on_delta: DeltaSink<'_>,
     ) -> Result<ProviderResponse, ProviderError> {
-        call_with_deadline(&req.model, cancel, self.send(req)).await
+        call_with_deadline(&req.model, cancel, self.send(req, cancel, on_delta)).await
     }
 }
 
 impl Gemini {
-    async fn send(&self, req: &ProviderRequest) -> Result<ProviderResponse, ProviderError> {
+    /// Stream first; a 4xx from `streamGenerateContent` means the endpoint does
+    /// not offer it, so the turn is retried once against `generateContent`.
+    async fn send(
+        &self,
+        req: &ProviderRequest,
+        cancel: &CancellationToken,
+        on_delta: DeltaSink<'_>,
+    ) -> Result<ProviderResponse, ProviderError> {
+        match self.send_stream(req, cancel, on_delta).await {
+            Err(ProviderError::BadRequest(_)) => self.send_once(req).await,
+            other => other,
+        }
+    }
+
+    async fn send_stream(
+        &self,
+        req: &ProviderRequest,
+        cancel: &CancellationToken,
+        on_delta: DeltaSink<'_>,
+    ) -> Result<ProviderResponse, ProviderError> {
+        let res = http_ai()
+            .post(self.stream_url())
+            .header("Content-Type", "application/json")
+            .header("Accept", "text/event-stream")
+            .json(&build_body(req))
+            .send()
+            .await
+            .map_err(|e| classify_reqwest(&e))?;
+        let status = res.status().as_u16();
+        let retry_after = retry_after_of(res.headers());
+        if !(200..300).contains(&status) {
+            let text = res.text().await.unwrap_or_default();
+            return Err(classify_status(status, retry_after, &text));
+        }
+
+        let mut lines = LineReader::new(res.bytes_stream());
+        let mut acc = StreamAcc::default();
+        let mut deltas = DeltaBatch::new(on_delta);
+        loop {
+            match lines.next_line(cancel).await {
+                Ok(Some(line)) => {
+                    if let Err(e) = acc.feed_line(&line, &mut deltas) {
+                        deltas.flush();
+                        if acc.has_content() {
+                            break;
+                        }
+                        return Err(e);
+                    }
+                }
+                Ok(None) => break,
+                Err(ProviderError::Cancelled) => return Err(ProviderError::Cancelled),
+                Err(e) => {
+                    deltas.flush();
+                    if acc.has_content() {
+                        break;
+                    }
+                    return Err(e);
+                }
+            }
+        }
+        deltas.flush();
+        let aborted = acc.finish_reason.is_none();
+        let has_content = acc.has_content();
+        let parsed = acc.finish(req.turn, aborted);
+        if !has_content && aborted {
+            // A 200 that yielded no events at all is a gateway that ignored
+            // `stream`: fall back to the plain request rather than retrying.
+            return Err(ProviderError::BadRequest(
+                "השידור מ-Gemini הסתיים ללא תוכן".to_string(),
+            ));
+        }
+        if parsed.stop == StopReason::Refusal && parsed.tool_uses().is_empty() {
+            return Err(ProviderError::Refusal);
+        }
+        Ok(parsed)
+    }
+
+    async fn send_once(&self, req: &ProviderRequest) -> Result<ProviderResponse, ProviderError> {
         let res = http_ai()
             .post(self.url())
             .header("Content-Type", "application/json")
@@ -464,5 +658,114 @@ mod tests {
             "https://p.io/v1beta/models/m:generateContent".into(),
         );
         assert!(g3.url().ends_with("?key=K"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Streaming
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn stream_url_switches_the_method_and_asks_for_sse() {
+        let g = Gemini::new("K".into(), "gemini-2.5-flash".into(), String::new());
+        let u = g.stream_url();
+        assert!(u.contains(":streamGenerateContent"));
+        assert!(!u.contains(":generateContent?"));
+        assert!(u.contains("alt=sse"));
+        assert!(u.contains("key=K"));
+        // the non-streaming URL is untouched
+        assert!(g.url().contains(":generateContent?key=K"));
+
+        let g2 = Gemini::new("K".into(), "m".into(), "https://p.io/v1beta".into());
+        assert_eq!(
+            g2.stream_url(),
+            "https://p.io/v1beta/models/m:streamGenerateContent?key=K&alt=sse"
+        );
+    }
+
+    fn run_stream(sse: &str, turn: u32) -> (ProviderResponse, String) {
+        let seen = std::sync::Mutex::new(String::new());
+        let sink = |d: &str| seen.lock().unwrap().push_str(d);
+        let mut acc = StreamAcc::default();
+        {
+            let mut deltas = DeltaBatch::new(&sink);
+            for line in sse.split('\n') {
+                acc.feed_line(line.trim_end_matches('\r'), &mut deltas).unwrap();
+            }
+        }
+        let aborted = acc.finish_reason.is_none();
+        let out = acc.finish(turn, aborted);
+        let text = seen.lock().unwrap().clone();
+        (out, text)
+    }
+
+    #[test]
+    fn stream_accumulates_text_then_a_function_call() {
+        let sse = concat!(
+            r#"data: {"candidates":[{"content":{"parts":[{"text":"בודק"}],"role":"model"}}]}"#,
+            "\n\n",
+            r#"data: {"candidates":[{"content":{"parts":[{"text":" את השלוחה"}],"role":"model"}}]}"#,
+            "\n\n",
+            r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"lookup_param","args":{"key":"type"}}}],"role":"model"}}]}"#,
+            "\n\n",
+            r#"data: {"candidates":[{"content":{"parts":[]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1000,"candidatesTokenCount":30,"thoughtsTokenCount":5,"cachedContentTokenCount":700}}"#,
+            "\n\n",
+        );
+        let (r, streamed) = run_stream(sse, 4);
+        assert_eq!(streamed, "בודק את השלוחה");
+        assert_eq!(r.text(), "בודק את השלוחה");
+        let calls = r.tool_uses();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "gemini_4_0");
+        assert_eq!(calls[0].1, "lookup_param");
+        assert_eq!(calls[0].2["key"], json!("type"));
+        // finishReason STOP alongside a call — the runner still sees the call
+        assert_eq!(r.stop, StopReason::EndTurn);
+        // usageMetadata of the LAST chunk, thoughts folded into output
+        assert_eq!(r.usage.input, 300);
+        assert_eq!(r.usage.cache_read, 700);
+        assert_eq!(r.usage.output, 35);
+    }
+
+    #[test]
+    fn a_thought_part_is_not_streamed_to_the_ui() {
+        let sse = concat!(
+            r#"data: {"candidates":[{"content":{"parts":[{"text":"מחשבה","thought":true}]}}]}"#,
+            "\n",
+            r#"data: {"candidates":[{"content":{"parts":[{"text":"תשובה"}]},"finishReason":"STOP"}]}"#,
+            "\n",
+        );
+        let (r, streamed) = run_stream(sse, 1);
+        assert_eq!(streamed, "תשובה");
+        assert_eq!(r.text(), "תשובה");
+    }
+
+    #[test]
+    fn a_truncated_gemini_stream_keeps_what_arrived() {
+        let sse = concat!(
+            r#"data: {"candidates":[{"content":{"parts":[{"text":"חצי"}]}}]}"#,
+            "\n",
+            r#"data: {"candidates":[{"content":{"par"#,
+        );
+        let (r, streamed) = run_stream(sse, 2);
+        assert_eq!(streamed, "חצי");
+        assert_eq!(r.text(), "חצי");
+        assert_eq!(r.stop, StopReason::Other("stream_incomplete".to_string()));
+    }
+
+    #[test]
+    fn a_gemini_error_frame_is_transient() {
+        let seen = std::sync::Mutex::new(String::new());
+        let sink = |d: &str| seen.lock().unwrap().push_str(d);
+        let mut deltas = DeltaBatch::new(&sink);
+        let mut acc = StreamAcc::default();
+        let e = acc
+            .feed_line(
+                r#"data: {"error":{"code":500,"message":"internal","status":"INTERNAL"}}"#,
+                &mut deltas,
+            )
+            .unwrap_err();
+        assert!(matches!(e, ProviderError::Transient(_)));
+        assert!(e.retryable());
+        assert!(!acc.has_content());
     }
 }
