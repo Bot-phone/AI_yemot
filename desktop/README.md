@@ -40,6 +40,7 @@ Rust backend (src-tauri/src/)
   knowledge.rs      BM25 query side over the embedded index
   yemot.rs          Yemot API client (login, MFA, read/write extensions)
   yemot_ini.rs      parsing/emitting the ext.ini extension format
+  secrets.rs        OS keychain storage for the Yemot token and provider keys
   updater.rs        GitHub releases/latest check (see below)
         ▼
 Yemot HaMashiach API (call2all.co.il/ym/api)
@@ -61,7 +62,10 @@ Changing `knowledge/` therefore requires a rebuild, not a restart.
 
 The loop never mutates a phone system silently: mutating tool calls are
 collected, surfaced in the UI with a before/after diff, and only applied after
-`approve_actions` comes back from the frontend.
+`approve_actions` comes back from the frontend. Applied actions can be reversed
+with `undo_action` as long as the server state has not moved since. Full
+lifecycle details (stale-state checks, double-approval, undo) are in
+[`docs/agent-contract.md`](docs/agent-contract.md).
 
 ### Updates
 
