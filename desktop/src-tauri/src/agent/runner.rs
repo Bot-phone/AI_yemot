@@ -139,6 +139,10 @@ pub struct RunHandle {
     /// resolves its attachment id against this list only — never against
     /// anything the model wrote.
     pub audio: Arc<Mutex<HashMap<String, Attachment>>>,
+    /// The run's attachment list, exactly as the model was shown it. A
+    /// continuation replays this run's transcript — which still advertises
+    /// these ids — so it must inherit the list or those ids stop resolving.
+    pub attachments: Arc<Vec<Attachment>>,
 }
 
 impl RunHandle {
@@ -211,50 +215,68 @@ fn size_kb(bytes: u64) -> u64 {
     bytes.div_ceil(1024)
 }
 
-/// Validate the user's attachments at run start. Fails closed: an attachment
-/// that cannot be checked (missing, not a regular file) is an error, not a
-/// warning — the run would otherwise propose an upload it can never apply.
-pub fn validate_attachments(list: &[Attachment]) -> Result<(), String> {
-    let mut seen: HashSet<&str> = HashSet::new();
-    for a in list {
-        if a.id.trim().is_empty() || !seen.insert(a.id.as_str()) {
+fn too_big_msg(name: &str) -> String {
+    format!(
+        "הקובץ {} גדול מ-{} MB",
+        name,
+        yemot::MAX_UPLOAD_BYTES / (1024 * 1024)
+    )
+}
+
+/// Validate the user's attachments at run start, and **write the real size on
+/// disk back into each one** — the size the frontend declares is advisory (it
+/// is `0` when the file was picked through the native dialog), and it is what
+/// the model, the proposal params and the change log all quote.
+///
+/// Fails closed: an attachment that cannot be checked (missing, not a regular
+/// file) is an error, not a warning — the run would otherwise propose an upload
+/// it can never apply.
+pub fn validate_attachments(list: &mut [Attachment]) -> Result<(), String> {
+    let mut seen: HashSet<String> = HashSet::new();
+    for a in list.iter_mut() {
+        if a.id.trim().is_empty() || !seen.insert(a.id.clone()) {
             return Err(format!("מזהה קובץ מצורף כפול או ריק: {}", a.id));
         }
-        let ext = ext_of(&a.name);
-        if !AUDIO_EXTS.contains(&ext.as_str()) {
-            return Err(format!(
-                "הקובץ {} אינו קובץ שמע נתמך. סוגים נתמכים: {}",
-                a.name,
-                AUDIO_EXTS.join(", ")
-            ));
+        // Both names are checked: the display name is what the user sees, the
+        // local path is what actually gets read and uploaded, and a run must
+        // not be able to upload a `.exe` that merely *claims* to be a `.mp3`.
+        for candidate in [&a.name, &a.local_path] {
+            let ext = ext_of(candidate);
+            if !AUDIO_EXTS.contains(&ext.as_str()) {
+                return Err(format!(
+                    "הקובץ {} אינו קובץ שמע נתמך. סוגים נתמכים: {}",
+                    a.name,
+                    AUDIO_EXTS.join(", ")
+                ));
+            }
         }
         let mime = a.mime.trim().to_lowercase();
         if !mime.is_empty() && !mime.starts_with("audio/") {
             return Err(format!("סוג הקובץ {} אינו שמע: {}", a.name, a.mime));
         }
-        if a.size > yemot::MAX_UPLOAD_BYTES {
-            return Err(format!(
-                "הקובץ {} גדול מ-{} MB",
-                a.name,
-                yemot::MAX_UPLOAD_BYTES / (1024 * 1024)
-            ));
-        }
         match std::fs::metadata(&a.local_path) {
             Ok(m) if !m.is_file() => {
                 return Err(format!("הנתיב של {} אינו קובץ", a.name));
             }
-            Ok(m) if m.len() > yemot::MAX_UPLOAD_BYTES => {
-                return Err(format!(
-                    "הקובץ {} גדול מ-{} MB",
-                    a.name,
-                    yemot::MAX_UPLOAD_BYTES / (1024 * 1024)
-                ));
-            }
-            Ok(_) => {}
+            Ok(m) if m.len() > yemot::MAX_UPLOAD_BYTES => return Err(too_big_msg(&a.name)),
+            // The disk is the authority on size; the declared value is dropped.
+            Ok(m) => a.size = m.len(),
             Err(_) => return Err(format!("הקובץ {} לא נמצא במחשב", a.name)),
         }
     }
     Ok(())
+}
+
+/// Re-check one attachment at *apply* time. The approval dialog may sit open
+/// for minutes, so the file that `validate_attachments` measured can have been
+/// replaced by a bigger one — or by a directory — before the bytes are read.
+fn recheck_attachment(att: &Attachment) -> Result<(), String> {
+    match std::fs::metadata(&att.local_path) {
+        Ok(m) if !m.is_file() => Err(format!("הנתיב של {} אינו קובץ", att.name)),
+        Ok(m) if m.len() > yemot::MAX_UPLOAD_BYTES => Err(too_big_msg(&att.name)),
+        Ok(_) => Ok(()),
+        Err(_) => Err(format!("לא ניתן לקרוא את הקובץ {} מהמחשב", att.name)),
+    }
 }
 
 /// `[קבצים מצורפים]` — the only place the model learns which ids exist.
@@ -293,7 +315,7 @@ fn new_run_id() -> String {
 pub async fn start_agent_run(
     app: AppHandle,
     registry: State<'_, AgentRegistry>,
-    payload: AgentRunPayload,
+    mut payload: AgentRunPayload,
 ) -> Result<AgentRunStarted, String> {
     if payload.prompt.trim().is_empty() {
         return Err("לא הוזנה בקשה".to_string());
@@ -301,7 +323,7 @@ pub async fn start_agent_run(
     if payload.yemot_token.trim().is_empty() {
         return Err("נדרשת התחברות למערכת ימות המשיח".to_string());
     }
-    validate_attachments(&payload.attachments)?;
+    validate_attachments(&mut payload.attachments)?;
     let provider = providers::build(
         &payload.provider,
         &payload.model,
@@ -340,7 +362,7 @@ pub async fn start_agent_run(
 pub async fn continue_agent_run(
     app: AppHandle,
     registry: State<'_, AgentRegistry>,
-    payload: AgentRunPayload,
+    mut payload: AgentRunPayload,
     parent_run_id: String,
 ) -> Result<AgentRunStarted, String> {
     if payload.prompt.trim().is_empty() {
@@ -349,11 +371,11 @@ pub async fn continue_agent_run(
     if payload.yemot_token.trim().is_empty() {
         return Err("נדרשת התחברות למערכת ימות המשיח".to_string());
     }
-    validate_attachments(&payload.attachments)?;
+    validate_attachments(&mut payload.attachments)?;
 
     // Everything the parent leaves behind is read here, before the claim below
     // evicts its handle.
-    let (history, parent_actions) = {
+    let (history, parent_actions, parent_attachments) = {
         let runs = registry.runs.lock().await;
         let parent = runs
             .get(&parent_run_id)
@@ -363,7 +385,7 @@ pub async fn continue_agent_run(
         }
         let history = parent.transcript.lock().await.clone();
         let actions = parent.proposed.lock().await.clone();
-        (history, actions)
+        (history, actions, parent.attachments.clone())
     };
     if history.is_empty() {
         return Err("אין תמלול למשימה הקודמת — התחל משימה חדשה".to_string());
@@ -391,6 +413,12 @@ pub async fn continue_agent_run(
         status_block(&parent_actions, &applied, &undone)
     };
 
+    // The replayed transcript still advertises the parent's attachment ids, so
+    // the continuation inherits its list; without this an `upload_audio_file`
+    // on an id the model already knows would fail with ATTACHMENT_NOT_FOUND.
+    let carried = carry_attachments(&parent_attachments, &payload.attachments);
+    payload.attachments = carried.list;
+
     let client = Arc::new(YemotClient::new(payload.yemot_token.clone()));
     let (ctx, finished) = new_run(&app, &payload, model, client, registry).await?;
     let run_id = ctx.run_id.clone();
@@ -399,7 +427,10 @@ pub async fn continue_agent_run(
     initial.push(Message::user_text(continuation_text(
         &status,
         &payload.prompt,
-        &payload.attachments,
+        // Only the *new* files are re-listed: the parent's block is already in
+        // the replayed transcript, and repeating it would invite a duplicate.
+        &carried.fresh,
+        &carried.missing,
     )));
 
     tauri::async_runtime::spawn(async move {
@@ -425,6 +456,7 @@ async fn new_run(
     let transcript = Arc::new(Mutex::new(Vec::new()));
     let audio = Arc::new(Mutex::new(HashMap::new()));
     let finished = Arc::new(AtomicBool::new(false));
+    let attachments = Arc::new(payload.attachments.clone());
     registry
         .claim(
             &run_id,
@@ -435,6 +467,7 @@ async fn new_run(
                 finished: finished.clone(),
                 transcript: transcript.clone(),
                 audio: audio.clone(),
+                attachments: attachments.clone(),
             },
         )
         .await?;
@@ -451,7 +484,7 @@ async fn new_run(
             cancel,
             transcript,
             audio,
-            attachments: Arc::new(payload.attachments.clone()),
+            attachments,
         },
         finished,
     ))
@@ -479,10 +512,67 @@ async fn first_messages(
     vec![Message::user_text(first)]
 }
 
+/// What a continuation inherits from its parent's attachment list.
+struct CarriedAttachments {
+    /// The list the continuation runs with: the parent's still-usable files
+    /// first (their ids are already in the replayed transcript), then the new
+    /// ones. On an id collision the new payload wins — the user just picked
+    /// that file, and the id is what the model will name.
+    list: Vec<Attachment>,
+    /// The `fresh` entries only, in payload order — what the continuation's
+    /// `[קבצים מצורפים]` block advertises.
+    fresh: Vec<Attachment>,
+    /// `(id, name)` of parent files that are gone from disk. The model is told,
+    /// so it stops offering to upload them.
+    missing: Vec<(String, String)>,
+}
+
+/// Merge the parent run's attachments into the continuation's own.
+///
+/// A parent file is re-validated (which also refreshes its size): one that no
+/// longer passes is dropped from the list and reported as missing instead of
+/// staying in it as an upload that can never be applied.
+fn carry_attachments(parent: &[Attachment], fresh: &[Attachment]) -> CarriedAttachments {
+    let replaced: HashSet<&str> = fresh.iter().map(|a| a.id.as_str()).collect();
+    let mut list = Vec::new();
+    let mut missing = Vec::new();
+    for a in parent {
+        if replaced.contains(a.id.as_str()) {
+            continue;
+        }
+        let mut one = a.clone();
+        match validate_attachments(std::slice::from_mut(&mut one)) {
+            Ok(()) => list.push(one),
+            Err(_) => missing.push((a.id.clone(), a.name.clone())),
+        }
+    }
+    list.extend(fresh.iter().cloned());
+    CarriedAttachments { list, fresh: fresh.to_vec(), missing }
+}
+
+/// `[קבצים מצורפים שאינם זמינים עוד]` — parent files the continuation cannot
+/// upload any more. Empty list = no block, so the common case is unchanged.
+fn missing_attachments_block(missing: &[(String, String)]) -> Option<String> {
+    if missing.is_empty() {
+        return None;
+    }
+    let mut out = String::from("[קבצים מצורפים שאינם זמינים עוד]\n");
+    for (id, name) in missing {
+        out.push_str(&format!("- {}: {}\n", id, name));
+    }
+    Some(out)
+}
+
 /// The one user message a continuation adds: what happened to the previous
-/// proposals, the new instruction, and (when the user attached more files) the
-/// attachment list this run may upload from.
-fn continuation_text(status: &str, prompt: &str, attachments: &[Attachment]) -> String {
+/// proposals, the new instruction, (when the user attached more files) the
+/// attachment list this run may upload from, and which inherited files are
+/// gone.
+fn continuation_text(
+    status: &str,
+    prompt: &str,
+    attachments: &[Attachment],
+    missing: &[(String, String)],
+) -> String {
     let mut out = String::from(status);
     if !out.ends_with('\n') {
         out.push('\n');
@@ -490,6 +580,10 @@ fn continuation_text(status: &str, prompt: &str, attachments: &[Attachment]) -> 
     out.push('\n');
     out.push_str(prompt.trim());
     if let Some(block) = attachments_block(attachments) {
+        out.push_str("\n\n");
+        out.push_str(&block);
+    }
+    if let Some(block) = missing_attachments_block(missing) {
         out.push_str("\n\n");
         out.push_str(&block);
     }
@@ -586,6 +680,33 @@ pub struct UndoRecord {
 const STALE_MSG: &str = "הקובץ השתנה בשרת מאז ההצעה, הרץ שוב";
 const UNVERIFIABLE_MSG: &str = "לא ניתן לאמת את מצב הקובץ בשרת, נסה שוב";
 const UNDO_STALE_MSG: &str = "הקובץ השתנה מאז הביצוע, לא ניתן לבטל אוטומטית";
+/// The destination was free when the upload was proposed and is not any more.
+const AUDIO_APPEARED_MSG: &str = "הקובץ נוצר בשרת מאז ההצעה, הרץ שוב";
+const CANCELLED_AUDIO_MSG: &str = "הריצה בוטלה, הרץ שוב לפני העלאת שמע";
+
+/// Split off the `upload_audio_file` actions of a cancelled run.
+///
+/// A cancelled run stays approvable on purpose — the user may still want the
+/// `ext.ini` edits it already proposed, and every one of those can be undone.
+/// An audio upload cannot: Yemot exposes no file delete, so pushing bytes on
+/// behalf of a run the user stopped is not reversible. Refuse those, keep the
+/// rest.
+fn split_cancelled_audio(
+    cancelled: bool,
+    actions: Vec<ProposedAction>,
+) -> (Vec<ProposedAction>, Vec<ProposedAction>) {
+    if !cancelled {
+        return (actions, Vec::new());
+    }
+    actions.into_iter().partition(|a| a.kind != "upload_audio_file")
+}
+
+/// Did the upload destination gain a file since the proposal said it was free?
+/// Only asked when the proposal claimed the slot was empty: an overwrite the
+/// user already saw and approved stays approved.
+fn audio_slot_taken(proposed_exists: bool, present: &[String], name: &str) -> bool {
+    !proposed_exists && present.iter().any(|n| n.eq_ignore_ascii_case(name))
+}
 
 struct RunWriteState {
     applied: HashSet<String>,
@@ -662,6 +783,15 @@ pub fn change_label(kind: &str, path: &str, canon_path: &str, params: usize) -> 
             n => format!("עדכון {} הגדרות ב-{}", n, path),
         },
     }
+}
+
+/// `a_10` → `10`. Every row applied in one batch shares `applied_at_ms`, so the
+/// tie-break decides their order — and a lexical one puts `a_10` before `a_2`.
+fn action_seq(action_id: &str) -> u64 {
+    action_id
+        .rsplit_once('_')
+        .and_then(|(_, n)| n.parse().ok())
+        .unwrap_or(0)
 }
 
 static WRITE_STATE: std::sync::OnceLock<Mutex<HashMap<String, RunWriteState>>> =
@@ -778,6 +908,7 @@ pub async fn list_applied_changes() -> Result<Vec<AppliedChange>, String> {
     out.sort_by(|a, b| {
         b.applied_at_ms
             .cmp(&a.applied_at_ms)
+            .then_with(|| action_seq(&b.action_id).cmp(&action_seq(&a.action_id)))
             .then_with(|| b.action_id.cmp(&a.action_id))
     });
     Ok(out)
@@ -800,7 +931,7 @@ pub async fn approve_actions(
     run_id: String,
     action_ids: Vec<String>,
 ) -> Result<Vec<ActionApplyResult>, String> {
-    let (client, actions, audio) = {
+    let (client, actions, audio, cancelled) = {
         let runs = registry.runs.lock().await;
         let handle = runs
             .get(&run_id)
@@ -812,10 +943,27 @@ pub async fn approve_actions(
         // The attachment behind each audio action, as the tool resolved it from
         // the run's own list. Nothing the model wrote reaches the filesystem.
         let audio = handle.audio.lock().await.clone();
-        (handle.client.clone(), picked, audio)
+        (
+            handle.client.clone(),
+            picked,
+            audio,
+            handle.cancel.is_cancelled(),
+        )
     };
     if actions.is_empty() {
         return Err("לא נבחרו פעולות לביצוע".to_string());
+    }
+
+    // A cancelled run stays approvable — except for audio, the one kind with
+    // no undo at all. See `split_cancelled_audio`.
+    let (actions, blocked) = split_cancelled_audio(cancelled, actions);
+    let blocked_results: Vec<ActionApplyResult> =
+        blocked.iter().map(|a| refusal(a, CANCELLED_AUDIO_MSG)).collect();
+    if actions.is_empty() {
+        for r in &blocked_results {
+            events::action_applied(&app, &run_id, r);
+        }
+        return Ok(blocked_results);
     }
 
     // Approving the same action twice would apply the write twice — and the
@@ -882,6 +1030,7 @@ pub async fn approve_actions(
             undo: None,
         });
     }
+    results.extend(blocked_results);
 
     for r in &results {
         events::action_applied(&app, &run_id, r);
@@ -1175,6 +1324,34 @@ async fn apply_actions(
                 out.push(refusal(a, "הקובץ המצורף אינו זמין לריצה זו"));
                 continue;
             };
+            // Re-measure before reading: the run-start check is minutes old.
+            if let Err(msg) = recheck_attachment(att) {
+                refused.push(a.id.clone());
+                out.push(refusal(a, &msg));
+                continue;
+            }
+            // The overwrite warning was decided at propose time too. If the
+            // slot filled up since, the user approved a "new file" that would
+            // now silently destroy a recording. Fails closed, like every other
+            // stale guard here.
+            if !a.exists {
+                let (dir, name) = tools::dir_and_name(&a.canon_path);
+                match client.list_files(&dir).await {
+                    Ok(files) => {
+                        let present: Vec<String> = files.into_iter().map(|f| f.name).collect();
+                        if audio_slot_taken(a.exists, &present, &name) {
+                            refused.push(a.id.clone());
+                            out.push(refusal(a, AUDIO_APPEARED_MSG));
+                            continue;
+                        }
+                    }
+                    Err(_) => {
+                        refused.push(a.id.clone());
+                        out.push(refusal(a, UNVERIFIABLE_MSG));
+                        continue;
+                    }
+                }
+            }
             let bytes = match std::fs::read(&att.local_path) {
                 Ok(b) => b,
                 Err(_) => {
@@ -2265,6 +2442,7 @@ mod tests {
                 finished: flag.clone(),
                 transcript: Arc::new(Mutex::new(Vec::new())),
                 audio: Arc::new(Mutex::new(HashMap::new())),
+                attachments: Arc::new(Vec::new()),
             },
             proposed,
             flag,
@@ -2324,13 +2502,62 @@ mod tests {
     #[test]
     fn a_continuation_carries_the_status_then_the_instruction() {
         let status = status_block(&[action("a_1")], &HashSet::new(), &HashSet::new());
-        let text = continuation_text(&status, "  שנה גם את הכותרת  ", &[]);
+        let text = continuation_text(&status, "  שנה גם את הכותרת  ", &[], &[]);
         assert!(text.starts_with("[מצב ההצעות הקודמות]\n"));
         assert!(text.ends_with("שנה גם את הכותרת"));
         assert!(!text.contains("[קבצים מצורפים]"));
 
-        let with_files = continuation_text(&status, "העלה", &[attachment("f1", "a.mp3", 2048)]);
+        let with_files =
+            continuation_text(&status, "העלה", &[attachment("f1", "a.mp3", 2048)], &[]);
         assert!(with_files.contains("[קבצים מצורפים]\n- f1: a.mp3 (2 KB, audio/mpeg)"));
+    }
+
+    #[test]
+    fn a_continuation_reports_inherited_files_that_vanished() {
+        let status = status_block(&[], &HashSet::new(), &HashSet::new());
+        let text = continuation_text(
+            &status,
+            "המשך",
+            &[],
+            &[("a1".to_string(), "ברכה.mp3".to_string())],
+        );
+        assert!(text.contains("[קבצים מצורפים שאינם זמינים עוד]\n- a1: ברכה.mp3"));
+        assert!(missing_attachments_block(&[]).is_none());
+    }
+
+    #[test]
+    fn a_continuation_inherits_the_parents_attachments() {
+        let (parent_file, parent_path) = temp_attachment("ברכה.mp3", 100);
+        let (mut replacement, replacement_path) = temp_attachment("חדש.mp3", 200);
+        replacement.id = parent_file.id.clone(); // same id, new file
+        let (mut extra, extra_path) = temp_attachment("נוסף.mp3", 300);
+        extra.id = "f2".to_string();
+
+        let mut gone = parent_file.clone();
+        gone.id = "f9".to_string();
+        gone.local_path = format!("{}.nope", parent_file.local_path);
+
+        // Nothing collides: the parent's file leads, the new one follows.
+        let carried = carry_attachments(&[parent_file.clone()], &[extra.clone()]);
+        let ids: Vec<&str> = carried.list.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(ids, vec!["f1", "f2"], "the parent's ids must keep resolving");
+        assert!(carried.missing.is_empty());
+        assert_eq!(carried.fresh.len(), 1, "only new files are re-advertised");
+
+        // Same id in the new payload: the file the user just picked wins.
+        let carried = carry_attachments(&[parent_file.clone()], &[replacement.clone()]);
+        assert_eq!(carried.list.len(), 1);
+        assert_eq!(carried.list[0].name, "חדש.mp3");
+
+        // A parent file that is gone from disk is dropped and reported.
+        let carried = carry_attachments(&[parent_file.clone(), gone], &[]);
+        let ids: Vec<&str> = carried.list.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(ids, vec!["f1"]);
+        assert_eq!(carried.missing, vec![("f9".to_string(), "ברכה.mp3".to_string())]);
+
+        for p in [parent_path, replacement_path, extra_path] {
+            let _ = std::fs::remove_dir_all(p.parent().unwrap());
+        }
     }
 
     // -- attachments -------------------------------------------------------
@@ -2365,36 +2592,118 @@ mod tests {
     #[test]
     fn attachments_are_validated_at_run_start() {
         let (ok, path) = temp_attachment("ברכה.mp3", 64);
-        assert!(validate_attachments(std::slice::from_ref(&ok)).is_ok());
+        assert!(validate_attachments(&mut [ok.clone()]).is_ok());
 
         // a document is not an audio file
         let mut bad_ext = ok.clone();
         bad_ext.name = "רשימה.txt".to_string();
-        assert!(validate_attachments(&[bad_ext]).is_err());
+        assert!(validate_attachments(&mut [bad_ext]).is_err());
 
         // a plausible name with a non-audio mime is still refused
         let mut bad_mime = ok.clone();
         bad_mime.mime = "application/zip".to_string();
-        assert!(validate_attachments(&[bad_mime]).is_err());
-
-        // declared size over the cap, without touching the disk
-        let mut too_big = ok.clone();
-        too_big.size = yemot::MAX_UPLOAD_BYTES + 1;
-        assert!(validate_attachments(&[too_big]).is_err());
+        assert!(validate_attachments(&mut [bad_mime]).is_err());
 
         // the file must exist and be a regular file
         let mut missing = ok.clone();
         missing.local_path = format!("{}.nope", ok.local_path);
-        assert!(validate_attachments(&[missing]).is_err());
+        assert!(validate_attachments(&mut [missing]).is_err());
         let mut a_dir = ok.clone();
         a_dir.local_path = path.parent().unwrap().to_string_lossy().to_string();
         a_dir.name = "תיקיה.mp3".to_string();
-        assert!(validate_attachments(&[a_dir]).is_err());
+        assert!(validate_attachments(&mut [a_dir]).is_err());
 
         // duplicate ids would make the id → path resolution ambiguous
-        assert!(validate_attachments(&[ok.clone(), ok.clone()]).is_err());
+        assert!(validate_attachments(&mut [ok.clone(), ok.clone()]).is_err());
 
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// The name may look like audio while the path that actually gets read does
+    /// not — only the path is ever opened.
+    #[test]
+    fn the_local_path_is_extension_checked_too() {
+        let (ok, path) = temp_attachment("ברכה.mp3", 64);
+        let renamed = path.parent().unwrap().join("payload.exe");
+        std::fs::rename(&path, &renamed).unwrap();
+        let mut lying = ok.clone();
+        lying.local_path = renamed.to_string_lossy().to_string();
+        assert!(validate_attachments(&mut [lying]).is_err());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// The frontend's declared size is advisory — the block, the proposal
+    /// params and the change log must all quote what is on disk.
+    #[test]
+    fn validation_fills_in_the_real_size_from_disk() {
+        let (mut a, path) = temp_attachment("ברכה.mp3", 3_000);
+        a.size = 0; // what the file picker reports
+        let mut list = vec![a];
+        validate_attachments(&mut list).unwrap();
+        assert_eq!(list[0].size, 3_000);
+        assert!(
+            attachments_block(&list).unwrap().contains("(3 KB, audio/mpeg)"),
+            "the model must see the real size, not 0 KB"
+        );
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// The approval dialog may sit open for minutes; the file behind it can be
+    /// swapped in that window.
+    #[test]
+    fn an_attachment_is_re_measured_before_the_bytes_are_read() {
+        let (a, path) = temp_attachment("ברכה.mp3", 64);
+        assert!(recheck_attachment(&a).is_ok());
+
+        // grown past the cap since the proposal
+        let f = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        f.set_len(yemot::MAX_UPLOAD_BYTES + 1).unwrap();
+        drop(f);
+        let err = recheck_attachment(&a).unwrap_err();
+        assert!(err.contains("גדול מ-25 MB"), "got {err}");
+
+        // replaced by a directory
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir_all(&path).unwrap();
+        assert!(recheck_attachment(&a).unwrap_err().contains("אינו קובץ"));
+
+        // gone entirely
+        std::fs::remove_dir_all(&path).unwrap();
+        assert!(recheck_attachment(&a).is_err());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// The overwrite warning is decided when the action is proposed. If the
+    /// slot fills up before the approval, the user approved a "new file" that
+    /// would now destroy a recording nothing can restore.
+    #[test]
+    fn an_audio_slot_that_filled_up_since_the_proposal_is_refused() {
+        let present = vec!["000.WAV".to_string(), "001.wav".to_string()];
+        assert!(audio_slot_taken(false, &present, "000.wav"), "case-insensitive");
+        assert!(!audio_slot_taken(false, &present, "002.wav"));
+        // an overwrite the user already saw and approved stays approved
+        assert!(!audio_slot_taken(true, &present, "000.wav"));
+        assert_eq!(AUDIO_APPEARED_MSG, "הקובץ נוצר בשרת מאז ההצעה, הרץ שוב");
+    }
+
+    /// A cancelled run stays approvable — except for the one kind that cannot
+    /// be undone.
+    #[test]
+    fn a_cancelled_run_refuses_audio_uploads_only() {
+        let mut audio = action("a_2");
+        audio.kind = "upload_audio_file".to_string();
+        let picked = vec![action("a_1"), audio.clone()];
+
+        let (keep, blocked) = split_cancelled_audio(false, picked.clone());
+        assert_eq!(keep.len(), 2, "a live run applies everything it was given");
+        assert!(blocked.is_empty());
+
+        let (keep, blocked) = split_cancelled_audio(true, picked);
+        assert_eq!(keep.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), vec!["a_1"]);
+        assert_eq!(blocked.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), vec!["a_2"]);
+        let r = refusal(&blocked[0], CANCELLED_AUDIO_MSG);
+        assert!(!r.ok);
+        assert_eq!(r.message, "הריצה בוטלה, הרץ שוב לפני העלאת שמע");
     }
 
     #[test]
@@ -2503,6 +2812,39 @@ mod tests {
         assert_eq!(mine.len(), 2);
         assert_eq!(mine[0].action_id, "a_1");
         assert!(!mine[0].undone, "a fresh apply clears the undone mark");
+
+        write_state().lock().await.remove(&run);
+    }
+
+    /// Everything approved in one click shares `applied_at_ms`, so the
+    /// tie-break is the only thing ordering the batch — and `a_10` is newer
+    /// than `a_2`, not older.
+    #[tokio::test]
+    async fn a_batch_applied_together_is_ordered_by_action_number() {
+        let run = format!("r_test_{}", new_run_id());
+        let client = Arc::new(YemotClient::new("t"));
+        let row = |id: &str| AppliedRecord {
+            action_id: id.to_string(),
+            kind: "set_extension_params".into(),
+            path: "/3".into(),
+            canon_path: "ivr2:/3".into(),
+            params: vec![ActionParam { key: "type".into(), value: "menu".into() }],
+            applied_at_ms: 7_000,
+            undo_available: true,
+        };
+        let ids = ["a_2".to_string(), "a_9".to_string(), "a_10".to_string()];
+        claim_ids(&run, &client, &ids).await;
+        record_applied(&run, ids.iter().map(|i| row(i)).collect()).await;
+
+        let all = list_applied_changes().await.unwrap();
+        let mine: Vec<&str> = all
+            .iter()
+            .filter(|c| c.run_id == run)
+            .map(|c| c.action_id.as_str())
+            .collect();
+        assert_eq!(mine, vec!["a_10", "a_9", "a_2"]);
+        assert_eq!(action_seq("a_10"), 10);
+        assert_eq!(action_seq("weird"), 0, "an unparsable id must not panic");
 
         write_state().lock().await.remove(&run);
     }
