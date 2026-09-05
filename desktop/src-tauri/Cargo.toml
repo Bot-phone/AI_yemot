@@ -1,7 +1,7 @@
 [package]
 name = "desktop"
 version = "1.0.0"
-description = "AI yemot — עדכון שלוחות חכם למערכות ימות המשיח"
+description = "AI yemot — עורך קווי ימות המשיח מבוסס AI"
 authors = ["Bot-phone"]
 edition = "2021"
 
