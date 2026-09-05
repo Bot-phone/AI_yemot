@@ -88,11 +88,11 @@ jobs:
       matrix:
         include:
           - platform: windows-latest
-            args: ''
+            args: '--bundles nsis,msi'
           - platform: macos-latest
-            args: ''
+            args: '--bundles dmg,app'
           - platform: ubuntu-22.04
-            args: ''
+            args: '--bundles appimage,deb'
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 60
     steps:
