@@ -12,6 +12,7 @@
   import LineTree from "$lib/components/LineTree.svelte";
   import ExtensionInspector from "$lib/components/ExtensionInspector.svelte";
   import ChangeLog from "$lib/components/ChangeLog.svelte";
+  import TaskHistory from "$lib/components/TaskHistory.svelte";
   import PresetBar from "$lib/components/PresetBar.svelte";
   import SettingsPanel from "$lib/components/SettingsPanel.svelte";
   import {
@@ -92,6 +93,8 @@
   // Agent-run settings (direct mode)
   let autoApply = $state(false); // true = mutating tools run immediately, no approval step
   let includeTree = $state(true); // append the "[מצב נוכחי]" root tree to the first user message
+  /** Keep a local record of every finished task, so one can be continued later. */
+  let saveHistory = $state(true);
 
   // Status & Progress
   let isLoading = $state(false);
@@ -285,6 +288,21 @@
   /** @type {Record<string, string>} */
   let changeLogUndoState = $state({});
 
+  // ----- היסטוריית משימות (local task history) -----
+  /** @type {any[]} TaskSummary[] from `list_task_history`. */
+  let taskHistory = $state([]);
+  let historyLoading = $state(false);
+  let historyError = $state("");
+  /**
+   * The task_id of a stored task loaded into the workspace, "" while the panel
+   * is showing a live run. Its proposals are read-only: the run that made them
+   * is gone, so there is no handle left to approve or undo them through.
+   */
+  let loadedTaskId = $state("");
+  let historyReadOnly = $derived(loadedTaskId !== "");
+  /** A run (or a start/continue call) is in flight. */
+  let runBusy = $derived(agentRunning || agentStarting || refineBusy);
+
   onMount(async () => {
     // Load local storage if previously saved
     try {
@@ -307,6 +325,10 @@
 
       const savedIncludeTree = localStorage.getItem("includeTree");
       if (savedIncludeTree !== null) includeTree = savedIncludeTree === "true";
+
+      // Default on: the history is what makes "המשך משימה" work after a restart.
+      const savedSaveHistory = localStorage.getItem("ai_yemot_save_history");
+      if (savedSaveHistory !== null) saveHistory = savedSaveHistory === "true";
 
       const savedModelSource = localStorage.getItem("ai_yemot_model_source");
       if (savedModelSource === "list" || savedModelSource === "manual") {
@@ -338,6 +360,7 @@
     // backend does not provide them yet.
     void loadTree();
     void loadChangeLog();
+    void loadTaskHistory();
 
     // Load embedded knowledge files count
     try {
@@ -493,6 +516,7 @@
     try {
       localStorage.setItem("autoApply", String(autoApply));
       localStorage.setItem("includeTree", String(includeTree));
+      localStorage.setItem("ai_yemot_save_history", String(saveHistory));
     } catch (_) {}
   }
 
@@ -835,6 +859,142 @@
     await loadChangeLog();
   }
 
+  // ----- היסטוריית משימות -----
+
+  /**
+   * Read the stored task list back from Rust. Like the change log, this is a
+   * command an older binary does not register — then the card says so instead
+   * of showing a failure.
+   */
+  async function loadTaskHistory() {
+    historyLoading = true;
+    historyError = "";
+    try {
+      const list = await invoke("list_task_history");
+      taskHistory = Array.isArray(list) ? list : [];
+    } catch (e) {
+      taskHistory = [];
+      historyError = isMissingCommand(e)
+        ? t("history_unavailable")
+        : t("history_error", { error: errorText(e) });
+    } finally {
+      historyLoading = false;
+    }
+  }
+
+  /** Drop one stored task. An id the store does not know is not an error. */
+  /** @param {string} taskId */
+  async function deleteTaskHistory(taskId) {
+    if (!taskId) return;
+    try {
+      await invoke("delete_task_history", { taskId });
+      if (loadedTaskId === taskId) loadedTaskId = "";
+    } catch (e) {
+      historyError = isMissingCommand(e)
+        ? t("history_unavailable")
+        : t("history_error", { error: errorText(e) });
+    }
+    await loadTaskHistory();
+  }
+
+  /** Two-step confirmed in `TaskHistory`; this is the second step. */
+  async function clearTaskHistory() {
+    try {
+      await invoke("clear_task_history");
+      loadedTaskId = "";
+    } catch (e) {
+      historyError = isMissingCommand(e)
+        ? t("history_unavailable")
+        : t("history_error", { error: errorText(e) });
+    }
+    await loadTaskHistory();
+  }
+
+  /**
+   * "המשך משימה" — load a stored task into the workspace as the current one.
+   *
+   * The record arrives without its transcript (display only); the transcript
+   * that the continuation replays stays in Rust. What lands on screen is the
+   * chain of instructions, the last run's final answer, and its proposals —
+   * read-only, because the run that could apply them no longer exists. The only
+   * way forward from here is "דייק את המשימה", which continues the chain
+   * through its `task_id`.
+   * @param {string} taskId
+   */
+  async function continueFromHistory(taskId) {
+    if (!taskId || runBusy || isLoading) return;
+    historyError = "";
+    /** @type {any} */
+    let record;
+    try {
+      record = await invoke("get_task_history", { taskId });
+    } catch (e) {
+      historyError = isMissingCommand(e)
+        ? t("history_unavailable")
+        : t("history_load_failed", { error: errorText(e) });
+      return;
+    }
+    if (!record) {
+      historyError = t("history_load_failed", { error: taskId });
+      return;
+    }
+
+    // Clears the live panel — and `loadedTaskId`, which is set again below.
+    resetAgentRun();
+
+    const instructions = Array.isArray(record.instructions)
+      ? record.instructions.map((/** @type {any} */ x) => String(x))
+      : [];
+    const finalText = typeof record.final_text === "string" ? record.final_text : "";
+
+    taskChain = instructions;
+    loadedTaskId = String(record.task_id ?? taskId);
+    agentFinish = {
+      ok: record.ok !== false,
+      stop: typeof record.stop === "string" ? record.stop : "end_turn",
+      final_text: finalText,
+      // `TaskUsage` carries no elapsed time and no cache ratio, and the stats /
+      // cost lines are stated as measured facts — so a stored task shows none
+      // rather than made-up zeroes.
+      usage: null
+    };
+    if (finalText) {
+      pushTimeline({ type: "text", text: finalText, streaming: false });
+    }
+    resultOutput = finalText;
+
+    mergeProposedActions(Array.isArray(record.actions) ? record.actions : []);
+    const appliedIds = Array.isArray(record.applied_action_ids)
+      ? record.applied_action_ids
+      : [];
+    /** @type {Record<string, any>} */
+    const applied = {};
+    for (const id of appliedIds) {
+      applied[String(id)] = { action_id: String(id), ok: true, message: "" };
+    }
+    actionResults = applied;
+
+    // The refine box continues the chain, not a live run: its parent is the
+    // task id, and a retry after a failed continuation has to reproduce that.
+    lastRunKind = "continue";
+    lastRunParentId = loadedTaskId;
+    lastRunPrompt = instructions[instructions.length - 1] ?? "";
+    // Reuse the model the task ran on only when it belongs to the provider that
+    // is selected now — otherwise the continuation would hand one provider
+    // another provider's model id.
+    lastPayloadModel =
+      record.provider === aiProvider && record.model
+        ? String(record.model)
+        : modelSource === "manual"
+          ? customModel.trim()
+          : selectedModel;
+
+    refineText = "";
+    refineError = "";
+    errorMessage = "";
+    statusMessage = "";
+  }
+
   // ============================================================
   //  Agent run (direct mode) — see docs/agent-contract.md
   // ============================================================
@@ -946,6 +1106,7 @@
     undoMessages = {};
     refineError = "";
     timelineAtBottom = true;
+    loadedTaskId = "";
     runId = null;
     agentRunning = false;
     agentCancelling = false;
@@ -1182,6 +1343,8 @@
         };
         if (p.final_text) resultOutput = p.final_text;
         statusMessage = p.ok ? t("request_success") : agentStopLabel(p.stop);
+        // The run just rewrote its task's record (unless history is off).
+        void loadTaskHistory();
       })
     );
 
@@ -1290,6 +1453,7 @@
       yemot_token: yemotToken.trim(),
       auto_apply: autoApply,
       include_tree: includeTree,
+      save_history: saveHistory,
       attachments: withAttachments
         ? attachments.map((a) => ({
             id: a.id,
@@ -1349,6 +1513,7 @@
       undoMessages,
       refineError,
       timelineAtBottom,
+      loadedTaskId,
       runId,
       agentRunning,
       agentCancelling,
@@ -1371,6 +1536,7 @@
     undoMessages = s.undoMessages;
     refineError = s.refineError;
     timelineAtBottom = s.timelineAtBottom;
+    loadedTaskId = s.loadedTaskId;
     runId = s.runId;
     agentRunning = s.agentRunning;
     agentCancelling = s.agentCancelling;
@@ -1400,7 +1566,9 @@
    */
   async function continueAgentRun(parentIdArg, textArg) {
     const text = (textArg ?? refineText).trim();
-    const parentRunId = parentIdArg ?? runId;
+    // A task loaded from the history has no live run id: its chain is continued
+    // through the task_id, which `continue_agent_run` resolves from the store.
+    const parentRunId = parentIdArg ?? runId ?? loadedTaskId;
     if (!text || !parentRunId || refineBusy) return false;
 
     const payload = buildRunPayload(lastPayloadModel || selectedModel, text, false);
@@ -2638,6 +2806,16 @@
           </div>
         {/if}
 
+        <!-- A task loaded from the history says so before anything it shows -->
+        {#if historyReadOnly}
+          <p
+            class="text-xs text-blue-900 bg-blue-50 border border-blue-200 rounded-2xl px-4 py-2.5"
+            role="status"
+          >
+            {t("history_loaded_notice")}
+          </p>
+        {/if}
+
         <!-- Agent Progress Panel (direct mode) -->
         {#if agentTimeline.length > 0 || agentRunning || agentFinish || agentError}
           <AgentTimeline
@@ -2685,11 +2863,12 @@
             onCancelConfirm={() => (confirmRisky = false)}
             onToggleAction={handleActionToggled}
             onUndo={undoAction}
+            readOnly={historyReadOnly}
           />
         {/if}
 
         <!-- "דייק את המשימה" — one more instruction, continuing this run -->
-        {#if agentFinish && runId && !agentRunning}
+        {#if agentFinish && (runId || loadedTaskId) && !agentRunning}
           <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-2">
             <label for="refine-input" class="block text-sm font-bold text-slate-800">
               {t("refine_title")}
@@ -2841,6 +3020,19 @@
           onRefresh={loadChangeLog}
           onUndo={undoLoggedChange}
         />
+
+        <!-- היסטוריית משימות — the tasks kept on this computer -->
+        <TaskHistory
+          items={taskHistory}
+          loading={historyLoading}
+          error={historyError}
+          runActive={runBusy}
+          {loadedTaskId}
+          onRefresh={loadTaskHistory}
+          onContinue={continueFromHistory}
+          onDelete={deleteTaskHistory}
+          onClearAll={clearTaskHistory}
+        />
       </div>
     </div>
   </main>
@@ -2906,6 +3098,7 @@
       onSaveApiKey={saveApiKey}
       bind:autoApply
       bind:includeTree
+      bind:saveHistory
       onSaveAgentToggles={saveAgentToggles}
       bind:logoutOnFinish
       bind:isPreviewMode
