@@ -18,7 +18,9 @@ use super::{call_with_deadline, classify_reqwest, classify_status, http_ai, retr
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 const API_VERSION: &str = "2023-06-01";
 const FALLBACK_BETA: &str = "server-side-fallback-2026-07-01";
-const MAX_TOKENS: u64 = 8000;
+const MAX_TOKENS: u64 = 16000;
+/// Haiku has no adaptive thinking: it takes an explicit budget instead.
+const HAIKU_THINKING_BUDGET: u64 = 4000;
 
 pub struct Anthropic {
     api_key: String,
@@ -132,12 +134,26 @@ pub fn messages_json(messages: &[Message]) -> Value {
     Value::Array(out)
 }
 
+/// `thinking: adaptive` and `output_config.effort` are not universal: the 4.5
+/// generation (Haiku here) only understands an explicit thinking budget, and
+/// rejects `output_config` outright. Everything newer keeps adaptive + effort.
+pub fn wants_adaptive_thinking(model: &str) -> bool {
+    !model.to_ascii_lowercase().starts_with("claude-haiku-4-5")
+}
+
 pub fn build_body(req: &ProviderRequest) -> Value {
     let mut body = Map::new();
     body.insert("model".to_string(), json!(req.model));
     body.insert("max_tokens".to_string(), json!(MAX_TOKENS));
-    body.insert("thinking".to_string(), json!({ "type": "adaptive" }));
-    body.insert("output_config".to_string(), json!({ "effort": "medium" }));
+    if wants_adaptive_thinking(&req.model) {
+        body.insert("thinking".to_string(), json!({ "type": "adaptive" }));
+        body.insert("output_config".to_string(), json!({ "effort": "medium" }));
+    } else {
+        body.insert(
+            "thinking".to_string(),
+            json!({ "type": "enabled", "budget_tokens": HAIKU_THINKING_BUDGET }),
+        );
+    }
     body.insert("tools".to_string(), tools_json(&req.tools));
     body.insert("system".to_string(), system_json(&req.system));
     body.insert("messages".to_string(), messages_json(&req.messages));
@@ -167,9 +183,13 @@ pub fn parse_response(json: &Value) -> ProviderResponse {
     if let Some(items) = json.get("content").and_then(|c| c.as_array()) {
         for item in items {
             match item.get("type").and_then(|t| t.as_str()).unwrap_or("") {
-                "text" => content.push(ContentBlock::Text(
-                    item.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string(),
-                )),
+                // An empty text block is noise the runner would echo as a turn.
+                "text" => {
+                    let t = item.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                    if !t.trim().is_empty() {
+                        content.push(ContentBlock::Text(t.to_string()));
+                    }
+                }
                 "tool_use" => content.push(ContentBlock::ToolUse {
                     id: item.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                     name: item.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
@@ -306,7 +326,7 @@ mod tests {
     #[test]
     fn body_shape_matches_the_api() {
         let b = build_body(&fixture_req("claude-sonnet-5"));
-        assert_eq!(b["max_tokens"], json!(8000));
+        assert_eq!(b["max_tokens"], json!(16000));
         assert_eq!(b["thinking"]["type"], json!("adaptive"));
         assert_eq!(b["output_config"]["effort"], json!("medium"));
         assert!(b.get("temperature").is_none());
@@ -324,6 +344,47 @@ mod tests {
         assert_eq!(b["messages"][1]["content"][1]["type"], json!("tool_use"));
         assert_eq!(b["messages"][2]["content"][0]["type"], json!("tool_result"));
         assert!(b.get("fallbacks").is_none());
+    }
+
+    #[test]
+    fn haiku_gets_an_explicit_budget_and_no_output_config() {
+        let b = build_body(&fixture_req("claude-haiku-4-5"));
+        assert_eq!(b["thinking"]["type"], json!("enabled"));
+        assert_eq!(b["thinking"]["budget_tokens"], json!(4000));
+        assert!(b.get("output_config").is_none());
+        assert!(b["thinking"]["budget_tokens"].as_u64().unwrap() < 16000);
+
+        // dated haiku ids too
+        assert!(!wants_adaptive_thinking("claude-haiku-4-5-20251001"));
+        // everything newer keeps adaptive + effort
+        for m in [
+            "claude-opus-5",
+            "claude-sonnet-5",
+            "claude-opus-4-8",
+            "claude-sonnet-4-6",
+            "claude-fable-5-1",
+        ] {
+            assert!(wants_adaptive_thinking(m), "{} should stay adaptive", m);
+            let b = build_body(&fixture_req(m));
+            assert_eq!(b["thinking"]["type"], json!("adaptive"), "{}", m);
+            assert_eq!(b["output_config"]["effort"], json!("medium"), "{}", m);
+        }
+    }
+
+    #[test]
+    fn empty_text_blocks_are_dropped() {
+        let r = parse_response(&json!({
+            "content": [
+                {"type":"text","text":"   "},
+                {"type":"text","text":""},
+                {"type":"tool_use","id":"toolu_1","name":"lookup_param","input":{}}
+            ],
+            "stop_reason": "tool_use",
+            "usage": {}
+        }));
+        assert_eq!(r.content.len(), 1);
+        assert_eq!(r.text(), "");
+        assert_eq!(r.tool_uses().len(), 1);
     }
 
     #[test]

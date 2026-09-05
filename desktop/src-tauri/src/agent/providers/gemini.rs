@@ -157,9 +157,11 @@ pub fn contents_json(messages: &[Message]) -> Value {
             }
         }
 
-        // Function responses form their own turn, in call order.
+        // Function responses form their own turn, in call order. `Content.role`
+        // in the v1beta schema is only ever "user" or "model" — a
+        // functionResponse comes back to the model as a user turn.
         if !responses.is_empty() {
-            out.push(json!({ "role": "function", "parts": Value::Array(responses) }));
+            out.push(json!({ "role": "user", "parts": Value::Array(responses) }));
         }
         if !parts.is_empty() {
             out.push(json!({
@@ -171,15 +173,29 @@ pub fn contents_json(messages: &[Message]) -> Value {
     Value::Array(out)
 }
 
+/// Flash bills "thoughts" as output and thinks by default; for this workload
+/// (schema-driven tool calls over documented parameters) that is paid latency.
+/// Pro cannot disable thinking at all, so the key is omitted there.
+pub fn thinking_config(model: &str) -> Option<Value> {
+    if model.to_ascii_lowercase().contains("flash") {
+        Some(json!({ "thinkingBudget": 0 }))
+    } else {
+        None
+    }
+}
+
 pub fn build_body(req: &ProviderRequest) -> Value {
+    let mut generation = Map::new();
+    generation.insert("temperature".to_string(), json!(0));
+    generation.insert("maxOutputTokens".to_string(), json!(MAX_OUTPUT_TOKENS));
+    if let Some(tc) = thinking_config(&req.model) {
+        generation.insert("thinkingConfig".to_string(), tc);
+    }
     json!({
         "systemInstruction": { "parts": [{ "text": req.system.join("\n\n") }] },
         "contents": contents_json(&req.messages),
         "tools": tools_json(&req.tools),
-        "generationConfig": {
-            "temperature": 0,
-            "maxOutputTokens": MAX_OUTPUT_TOKENS,
-        },
+        "generationConfig": Value::Object(generation),
         "safetySettings": [
             { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE" },
             { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE" },
@@ -315,6 +331,27 @@ mod tests {
         assert_eq!(s["required"], json!(["file", "heading"]));
     }
 
+    fn req_for(model: &str) -> ProviderRequest {
+        ProviderRequest {
+            model: model.into(),
+            system: vec!["rules".into(), "catalog".into()],
+            messages: vec![Message::user_text("היי")],
+            tools: vec![tool()],
+            turn: 1,
+        }
+    }
+
+    #[test]
+    fn flash_disables_thinking_pro_does_not() {
+        let flash = build_body(&req_for("gemini-2.5-flash"));
+        assert_eq!(flash["generationConfig"]["thinkingConfig"]["thinkingBudget"], json!(0));
+        let pro = build_body(&req_for("gemini-2.5-pro"));
+        assert!(pro["generationConfig"].get("thinkingConfig").is_none());
+        // temperature and the cap survive the rewrite of generationConfig
+        assert_eq!(pro["generationConfig"]["temperature"], json!(0));
+        assert_eq!(pro["generationConfig"]["maxOutputTokens"], json!(8192));
+    }
+
     #[test]
     fn body_keeps_safety_settings_and_zero_temperature() {
         let req = ProviderRequest {
@@ -376,7 +413,8 @@ mod tests {
         assert_eq!(c[0]["role"], json!("model"));
         assert_eq!(c[0]["parts"][0]["text"], json!("בודק"));
         assert_eq!(c[0]["parts"][1]["functionCall"]["name"], json!("a"));
-        assert_eq!(c[1]["role"], json!("function"));
+        // v1beta Content.role is only "user" / "model" — never "function".
+        assert_eq!(c[1]["role"], json!("user"));
         assert_eq!(c[1]["parts"][0]["functionResponse"]["name"], json!("a"));
         assert_eq!(c[1]["parts"][0]["functionResponse"]["response"]["content"], json!("ra"));
         assert_eq!(c[1]["parts"][1]["functionResponse"]["name"], json!("b"));
