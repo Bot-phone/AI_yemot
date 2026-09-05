@@ -1,8 +1,8 @@
 [package]
 name = "desktop"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+version = "1.0.0"
+description = "AI yemot — עדכון שלוחות חכם למערכות ימות המשיח"
+authors = ["Bot-phone"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -23,7 +23,7 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["time", "sync", "macros", "rt", "rt-multi-thread"] }
 include_dir = "0.7"
 
 # --- knowledge index (build.rs BM25) --------------------------------------
@@ -34,9 +34,18 @@ include_dir = "0.7"
 # --- agent loop (src/agent/**) --------------------------------------------
 # async-trait : `trait Provider { async fn complete(..) }` without hand-rolled
 #               Pin<Box<dyn Future>> signatures.
-# futures     : `future::join_all` — read-only tools of one turn run in parallel.
+# futures-util: `future::join_all` — read-only tools of one turn run in parallel.
 # tokio-util  : `CancellationToken` — cancel between turns / mutating writes.
 async-trait = "0.1"
-futures = "0.3"
+futures-util = { version = "0.3", default-features = false, features = ["alloc", "std"] }
 tokio-util = "0.7"
 # --------------------------------------------------------------------------
+
+# Release profile: smaller, faster binary. `panic = "abort"` is safe here —
+# no `catch_unwind` and no thread whose panic must be recovered.
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

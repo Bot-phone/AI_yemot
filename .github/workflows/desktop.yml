@@ -1,0 +1,150 @@
+name: Desktop
+
+# בדיקות על כל PR ודחיפה ל-main, ובנייה + שחרור על תגית v*.
+# ה-release הוא מה שבודק המעדכן בתוך האפליקציה (releases/latest).
+on:
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - 'knowledge/**'
+      - '.github/workflows/desktop.yml'
+  # בלי מסנן paths: מסנן כזה חל גם על דחיפת תגית ועלול לחסום שחרור
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # החבילות ש-Tauri 2 דורש כדי לקמפל על אובונטו
+      - name: Ubuntu system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            libgtk-3-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            desktop/src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Rust tests
+        working-directory: desktop/src-tauri
+        run: cargo test --lib
+
+      - name: Frontend install
+        working-directory: desktop
+        run: npm ci
+
+      - name: Frontend check
+        working-directory: desktop
+        run: npm run check
+
+      - name: Frontend build
+        working-directory: desktop
+        run: npm run build
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ''
+          - platform: macos-latest
+            args: ''
+          - platform: ubuntu-22.04
+            args: ''
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ubuntu system dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            libgtk-3-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            desktop/src-tauri/target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Frontend install
+        working-directory: desktop
+        run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop
+          tagName: v__VERSION__
+          releaseName: 'AI yemot v__VERSION__'
+          releaseBody: 'הורידו את הקובץ המתאים למערכת ההפעלה שלכם.'
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}

@@ -2,12 +2,9 @@ name: Deploy Script (Apps Script)
 
 # פורס את gas/ai_yemot.gs לפרויקט ה-Apps Script בכל שינוי בו, ומעדכן את
 # ה-deployment הקיים — כלומר אותה כתובת /exec, בלי "New version" ידני.
+# ההרצה ידנית בלבד: הסקריפט הוא מורשת קפואה, האפליקציה השולחנית היא
+# המסלול העיקרי. אין פריסה אוטומטית על דחיפה ל-gas/.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'gas/**'
-      - '.github/workflows/deploy-gas.yml'
   workflow_dispatch:
     inputs:
       force:

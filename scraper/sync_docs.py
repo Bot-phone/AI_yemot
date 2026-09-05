@@ -274,7 +274,7 @@ def main():
     parser.add_argument("--force", action="store_true", help="עדכון קבצים גם אם לא זוהה שינוי")
     parser.add_argument("--limit", type=int, default=None, help="הגבלת מספר הנושאים לסנכרון (לבדיקות)")
     parser.add_argument("--gas-url", default=os.environ.get("GAS_WEBAPP_URL", ""), help="כתובת ה-Web App של Google Apps Script")
-    parser.add_argument("--admin-secret", default=os.environ.get("ADMIN_SECRET", "yemot_admin_secret"), help="סוד מנהל להתראות Apps Script")
+    parser.add_argument("--admin-secret", default=os.environ.get("ADMIN_SECRET") or None, help="סוד מנהל להתראות Apps Script (בלעדיו ההתראה לא נשלחת)")
     args = parser.parse_args()
 
     script_dir = Path(__file__).resolve().parent
@@ -318,7 +318,10 @@ def main():
         print("!" * 60 + "\n")
 
         if not args.dry_run and args.gas_url:
-            send_gas_alert(args.gas_url, args.admin_secret, unclassified_topics)
+            if args.admin_secret:
+                send_gas_alert(args.gas_url, args.admin_secret, unclassified_topics)
+            else:
+                print("[-] ADMIN_SECRET לא הוגדר — התראת Apps Script לא נשלחה.")
     else:
         print("[+] כל הנושאים בפורום מסווגים ומטופלים בהגדרות הוורקר.")
 

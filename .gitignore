@@ -1,7 +1,19 @@
+# Python
 __pycache__/
 *.pyc
+
+# Node / SvelteKit
+node_modules/
 desktop/node_modules/
 desktop/build/
 desktop/.svelte-kit/
+
+# Rust / Tauri
+target/
 desktop/src-tauri/target/
 desktop/src-tauri/gen/
+
+# Local env / editor
+.env
+.env.local
+.DS_Store
