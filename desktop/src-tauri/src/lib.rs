@@ -11,6 +11,9 @@ mod yemot_inspect;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        // Native file picker for audio attachments. The UI only learns local
+        // paths from it; Rust validates them before anything is uploaded.
+        .plugin(tauri_plugin_dialog::init())
         .manage(agent::AgentRegistry::default())
         .invoke_handler(tauri::generate_handler![
             knowledge::get_knowledge_files,

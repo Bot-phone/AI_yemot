@@ -3,11 +3,29 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { openUrl } from "@tauri-apps/plugin-opener";
+  import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
   import { t, i18n, isRTL, setLocale, availableLocales } from "$lib/i18n.svelte.js";
   import AgentTimeline from "$lib/components/AgentTimeline.svelte";
   import ActionApprovalList from "$lib/components/ActionApprovalList.svelte";
   import LoginModal from "$lib/components/LoginModal.svelte";
   import KnowledgeModal from "$lib/components/KnowledgeModal.svelte";
+  import LineTree from "$lib/components/LineTree.svelte";
+  import ExtensionInspector from "$lib/components/ExtensionInspector.svelte";
+  import ChangeLog from "$lib/components/ChangeLog.svelte";
+  import PresetBar from "$lib/components/PresetBar.svelte";
+  import SettingsPanel from "$lib/components/SettingsPanel.svelte";
+  import {
+    AUDIO_EXTENSIONS,
+    baseName,
+    errorText,
+    formatSize,
+    isMissingCommand,
+    isSessionExpired,
+    loadPresets,
+    mimeFromName,
+    savePresets,
+    seedPresets
+  } from "$lib/lineEditor.js";
 
   // Interface direction (reactive to language changes)
   let rtl = $derived(isRTL());
@@ -190,6 +208,67 @@
   /** @type {ReturnType<typeof setTimeout> | null} */
   let searchDebounce = null;
 
+  // ============================================================
+  //  Line editor workspace — tree, inspector, context, change log
+  // ============================================================
+
+  /** The settings drawer (everything that used to be the left-hand card). */
+  let showSettings = $state(false);
+  /** System number of the line we are signed in to, for the connection chip. */
+  let connectedSystem = $state("");
+
+  // ----- מבנה הקו (extension tree) -----
+  /** @type {any[]} ExtTreeNode[] from `get_extension_tree`. */
+  let treeNodes = $state([]);
+  let treeLoading = $state(false);
+  let treeError = $state("");
+  /** A tree actually came back from the line — proof the token still works. */
+  let treeOk = $state(false);
+  /** path -> open? */
+  /** @type {Record<string, boolean>} */
+  let treeExpanded = $state({});
+
+  // ----- Inspector -----
+  /** @type {string | null} */
+  let selectedExtPath = $state(null);
+  /** @type {string | null} */
+  let selectedExtDisplay = $state(null);
+  /** @type {any} ExtensionDetail from `read_extension`. */
+  let extDetail = $state(null);
+  let extLoading = $state(false);
+  let extError = $state("");
+
+  // ----- Task composer -----
+  /** Extensions pinned onto the task as context chips. */
+  /** @type {{path: string, display: string}[]} */
+  let contextExts = $state([]);
+  /** Audio files picked for upload: `Attachment` rows of the R2 contract. */
+  /** @type {{id: string, name: string, local_path: string, size: number, mime: string}[]} */
+  let attachments = $state([]);
+  let attachError = $state("");
+  /** User-editable ready-made tasks (`ai_yemot_presets_v1`). */
+  /** @type {{id: string, title: string, text: string}[]} */
+  let presets = $state([]);
+  /** The resolved model id of the last run, reused by a continuation. */
+  let lastPayloadModel = $state("");
+
+  // ----- Task continuation ("דייק את המשימה") -----
+  let refineText = $state("");
+  let refineBusy = $state(false);
+  let refineError = $state("");
+  /** Every instruction of the current task chain, oldest first. */
+  /** @type {string[]} */
+  let taskChain = $state([]);
+
+  // ----- יומן שינויים (applied change log) -----
+  /** @type {any[]} AppliedChange[] from `list_applied_changes`. */
+  let appliedChanges = $state([]);
+  let changeLogLoading = $state(false);
+  let changeLogError = $state("");
+  /** action_id -> "" | "done" | "failed" | "unavailable" */
+  /** @type {Record<string, string>} */
+  let changeLogUndoState = $state({});
+
   onMount(async () => {
     // Load local storage if previously saved
     try {
@@ -227,11 +306,22 @@
       const savedCustomBaseUrl = localStorage.getItem("ai_yemot_custom_base_url");
       if (savedCustomBaseUrl) customBaseUrl = savedCustomBaseUrl;
 
+      const savedSystem = localStorage.getItem("ai_yemot_system");
+      if (savedSystem) connectedSystem = savedSystem;
+
       normalizeModelSelection();
     } catch (_) {}
 
+    // Ready-made tasks are seeded on first run and editable afterwards.
+    presets = loadPresets(t);
+
     // Secrets live in the OS keychain, not in localStorage (migrated on first run).
     await loadSecrets();
+
+    // The workspace needs the line itself: both calls degrade quietly when the
+    // backend does not provide them yet.
+    void loadTree();
+    void loadChangeLog();
 
     // Load embedded knowledge files count
     try {
@@ -448,6 +538,7 @@
       if (res.success) {
         tokenStatus = { valid: true, message: res.message };
         await saveYemotToken();
+        void loadTree();
       } else if (res.mfa_required) {
         // One MFA surface only: reuse the login modal's MFA step with the token
         // we already hold, instead of a second, near-identical modal.
@@ -464,6 +555,250 @@
     } finally {
       statusMessage = "";
     }
+  }
+
+  // ============================================================
+  //  Line editor workspace
+  // ============================================================
+
+  /** Signed in *and* proven so — either by "בדוק" or by a tree that loaded. */
+  let connected = $derived.by(() => {
+    // The cast keeps TypeScript from narrowing `tokenStatus` to its `null`
+    // initializer at this point in the module body.
+    const status = /** @type {{valid: boolean, message: string} | null} */ (tokenStatus);
+    return !!yemotToken.trim() && (status?.valid === true || treeOk);
+  });
+
+  let connectionLabel = $derived(
+    connected
+      ? connectedSystem
+        ? t("connected_to", { system: connectedSystem })
+        : t("connected")
+      : t("not_connected")
+  );
+
+  /**
+   * Turn a rejected workspace `invoke` into the string its panel should show.
+   * A command this build does not register is "not available", not a failure;
+   * an expired Yemot session opens the login modal exactly like a dead run does.
+   * @param {unknown} e
+   * @param {string} unavailableKey
+   * @param {string} errorKey
+   * @returns {string}
+   */
+  function describeLineError(e, unavailableKey, errorKey) {
+    if (isMissingCommand(e)) return t(unavailableKey);
+    if (isSessionExpired(e)) {
+      openLoginModal();
+      loginError = t("agent_session_expired");
+      return t("agent_session_expired");
+    }
+    return t(errorKey, { error: errorText(e) });
+  }
+
+  /** Load "מבנה הקו" for the whole line (root ""), three levels deep. */
+  async function loadTree() {
+    const token = yemotToken.trim();
+    if (!token) {
+      treeNodes = [];
+      treeOk = false;
+      treeError = "";
+      return;
+    }
+    treeLoading = true;
+    treeError = "";
+    try {
+      const nodes = await invoke("get_extension_tree", { token, root: "", depth: 3 });
+      treeNodes = Array.isArray(nodes) ? nodes : [];
+      treeOk = true;
+    } catch (e) {
+      treeNodes = [];
+      treeOk = false;
+      treeError = describeLineError(e, "tree_unavailable", "tree_error");
+    } finally {
+      treeLoading = false;
+    }
+  }
+
+  /**
+   * Depth-first lookup of a node by canonical path.
+   * @param {any[]} list
+   * @param {string} path
+   * @returns {any}
+   */
+  function findTreeNode(list, path) {
+    for (const n of list) {
+      if (n.path === path) return n;
+      if (Array.isArray(n.children) && n.children.length > 0) {
+        const hit = findTreeNode(n.children, path);
+        if (hit) return hit;
+      }
+    }
+    return null;
+  }
+
+  /** @param {string} path */
+  function toggleTreeNode(path) {
+    treeExpanded = { ...treeExpanded, [path]: !treeExpanded[path] };
+  }
+
+  /** @param {string} path */
+  async function selectExtension(path) {
+    selectedExtPath = path;
+    const node = findTreeNode(treeNodes, path);
+    selectedExtDisplay = node?.display ?? path;
+    await loadExtension(path);
+  }
+
+  /** @param {string} path */
+  async function loadExtension(path) {
+    const token = yemotToken.trim();
+    if (!token || !path) return;
+    extLoading = true;
+    extError = "";
+    try {
+      extDetail = await invoke("read_extension", { token, path });
+    } catch (e) {
+      extDetail = null;
+      extError = describeLineError(e, "inspector_unavailable", "inspector_error");
+    } finally {
+      extLoading = false;
+    }
+  }
+
+  function refreshExtension() {
+    if (selectedExtPath) void loadExtension(selectedExtPath);
+  }
+
+  // ----- Context chips -----
+
+  /** Pin the inspected extension onto the task. */
+  function addInspectedToContext() {
+    const path = extDetail?.path ?? selectedExtPath;
+    if (!path) return;
+    if (contextExts.some((c) => c.path === path)) return;
+    const display = extDetail?.display ?? selectedExtDisplay ?? path;
+    contextExts = [...contextExts, { path, display }];
+  }
+
+  /** @param {string} path */
+  function removeContextExtension(path) {
+    contextExts = contextExts.filter((c) => c.path !== path);
+  }
+
+  /**
+   * The text actually sent to the model: the context chips are prepended to the
+   * instruction, never written into the textarea the user is editing.
+   * @param {string} text
+   */
+  function buildTaskPrompt(text) {
+    const base = text.trim();
+    if (contextExts.length === 0) return base;
+    const paths = contextExts.map((c) => c.display).join(", ");
+    return `${t("context_prefix", { paths })}\n\n${base}`;
+  }
+
+  // ----- Attachments (audio files for `upload_audio_file`) -----
+
+  /**
+   * The OS file picker. There is no command that stats a local file, so `size`
+   * is sent as 0 and the MIME type is inferred from the extension — Rust
+   * validates both against the real file before the run starts.
+   */
+  async function pickAttachments() {
+    attachError = "";
+    try {
+      const picked = await openFileDialog({
+        multiple: true,
+        filters: [{ name: "Audio", extensions: AUDIO_EXTENSIONS }]
+      });
+      const list = Array.isArray(picked) ? picked : picked ? [picked] : [];
+      const next = [...attachments];
+      for (const entry of list) {
+        const localPath = String(entry);
+        if (!localPath || next.some((a) => a.local_path === localPath)) continue;
+        const name = baseName(localPath);
+        next.push({ id: "", name, local_path: localPath, size: 0, mime: mimeFromName(name) });
+      }
+      attachments = renumberAttachments(next);
+    } catch (e) {
+      attachError = isMissingCommand(e)
+        ? t("attach_unavailable")
+        : t("attach_failed", { error: errorText(e) });
+    }
+  }
+
+  /**
+   * Ids are positional (`a1`, `a2`, …) and must stay dense: the model may only
+   * upload ids listed in the run's own `[קבצים מצורפים]` block.
+   * @param {{id: string, name: string, local_path: string, size: number, mime: string}[]} list
+   */
+  function renumberAttachments(list) {
+    return list.map((a, i) => ({ ...a, id: `a${i + 1}` }));
+  }
+
+  /** @param {string} id */
+  function removeAttachment(id) {
+    attachments = renumberAttachments(attachments.filter((a) => a.id !== id));
+  }
+
+  // ----- Ready-made tasks (presets) -----
+
+  /** @param {{id: string, title: string, text: string}[]} list */
+  function updatePresets(list) {
+    presets = list;
+    savePresets(list);
+  }
+
+  function restoreDefaultPresets() {
+    updatePresets(seedPresets(t));
+  }
+
+  // ----- יומן שינויים -----
+
+  /** Read the applied-change log back from Rust (survives a page reload). */
+  async function loadChangeLog() {
+    changeLogLoading = true;
+    changeLogError = "";
+    try {
+      const list = await invoke("list_applied_changes");
+      appliedChanges = Array.isArray(list) ? list : [];
+    } catch (e) {
+      appliedChanges = [];
+      changeLogError = isMissingCommand(e)
+        ? t("changelog_unavailable")
+        : t("changelog_error", { error: errorText(e) });
+    } finally {
+      changeLogLoading = false;
+    }
+  }
+
+  /**
+   * Undo from the change log. It targets the run that made the change, which is
+   * not necessarily the run on screen — hence the run id travelling with the row.
+   * @param {string} logRunId
+   * @param {string} actionId
+   */
+  async function undoLoggedChange(logRunId, actionId) {
+    try {
+      const r = /** @type {any} */ (
+        await invoke("undo_action", { runId: logRunId, actionId })
+      );
+      const outcome = r?.ok ? "done" : "failed";
+      changeLogUndoState = { ...changeLogUndoState, [actionId]: outcome };
+      // Keep the approval panel in step when it is showing the same action.
+      if (runId === logRunId) {
+        undoState = { ...undoState, [actionId]: outcome };
+        undoMessages = { ...undoMessages, [actionId]: r?.message ?? "" };
+      }
+    } catch (e) {
+      console.error("undo_action failed:", e);
+      changeLogUndoState = {
+        ...changeLogUndoState,
+        [actionId]: isMissingCommand(e) ? "unavailable" : "failed"
+      };
+    }
+    await loadChangeLog();
   }
 
   // ============================================================
@@ -575,6 +910,7 @@
     confirmRisky = false;
     undoState = {};
     undoMessages = {};
+    refineError = "";
     timelineAtBottom = true;
     runId = null;
     agentRunning = false;
@@ -861,24 +1197,121 @@
     }
   }
 
-  /** The "עלות: … · מטמון: … · n סבבים · t שנ׳" line. */
-  let agentFinishLine = $derived.by(() => {
+  /**
+   * Measured facts about the run — token counts, cache hit rate, turns, time.
+   * Nothing here is an estimate, so it carries no disclaimer.
+   */
+  let runStatsLine = $derived.by(() => {
     const usage = agentFinish?.usage;
     if (!usage) return "";
     const secs = ((usage.elapsed_ms ?? 0) / 1000).toFixed(1);
     const rawPct = usage.cache_hit_pct ?? 0;
     const cache = Math.round(rawPct <= 1 ? rawPct * 100 : rawPct);
-    const turns = usage.turns ?? 0;
+    return t("run_stats_line", {
+      in: usage.input_tokens ?? 0,
+      out: usage.output_tokens ?? 0,
+      cache,
+      turns: usage.turns ?? 0,
+      secs
+    });
+  });
+
+  /**
+   * The cost line. `cost_usd` is null whenever the model is not in the built-in
+   * price table, and `price_list_date` says which list the number came from —
+   * the app cannot see free tiers, discounts or a provider's price change, so
+   * this is stated as an estimate, never as a charge.
+   */
+  let runCostLine = $derived.by(() => {
+    const usage = agentFinish?.usage;
+    if (!usage) return "";
     if (usage.cost_usd === null || usage.cost_usd === undefined) {
-      return t("agent_finish_line_no_cost", { cache, turns, secs });
+      return t("run_cost_unknown");
     }
     const cost = Number(usage.cost_usd).toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
-    return t("agent_finish_line", { cost, cache, turns, secs });
+    const date = usage.price_list_date;
+    return date
+      ? t("run_cost_line", { cost, price_list_date: date })
+      : t("run_cost_line_no_date", { cost });
   });
+
+  /**
+   * Build an `AgentRunPayload`. Attachments only ride along on a fresh run — a
+   * continuation inherits the parent's list from the transcript.
+   * @param {string} payloadModel
+   * @param {string} prompt
+   * @param {boolean} withAttachments
+   */
+  function buildRunPayload(payloadModel, prompt, withAttachments) {
+    return {
+      provider: aiProvider,
+      model: payloadModel,
+      prompt,
+      api_key: apiKey.trim(),
+      base_url: customBaseUrl.trim(),
+      yemot_token: yemotToken.trim(),
+      auto_apply: autoApply,
+      include_tree: includeTree,
+      attachments: withAttachments
+        ? attachments.map((a) => ({
+            id: a.id,
+            name: a.name,
+            local_path: a.local_path,
+            size: a.size,
+            mime: a.mime
+          }))
+        : []
+    };
+  }
 
   /** Start the agentic loop in Rust and subscribe to its events. */
   /** @param {string} payloadModel */
   async function startAgentRun(payloadModel) {
+    resetAgentRun();
+    await setupAgentListeners();
+
+    lastPayloadModel = payloadModel;
+    agentStarting = true;
+    agentRunning = true;
+    isLoading = true;
+    statusMessage = t("agent_starting");
+    startRunTimer();
+
+    try {
+      const payload = buildRunPayload(payloadModel, buildTaskPrompt(promptText), true);
+      const started = await invoke("start_agent_run", { payload });
+      const id = /** @type {any} */ (started)?.run_id;
+      if (id && !runId) runId = id;
+      taskChain = [promptText.trim()];
+    } catch (e) {
+      teardownAgentListeners();
+      stopRunTimer();
+      agentRunning = false;
+      isLoading = false;
+      statusMessage = "";
+      errorMessage = t("comm_error", { error: e });
+    } finally {
+      agentStarting = false;
+    }
+  }
+
+  /**
+   * "דייק את המשימה" — continue the finished run with one more instruction.
+   * Rust replays the parent's transcript (so the cached prefix still hits) and
+   * hands back a brand-new run id, which the panel treats like any other run.
+   */
+  async function continueAgentRun() {
+    const text = refineText.trim();
+    const parentRunId = runId;
+    if (!text || !parentRunId || refineBusy) return;
+
+    const payload = buildRunPayload(lastPayloadModel || selectedModel, text, false);
+    const chain = [...taskChain];
+
+    refineBusy = true;
+    refineError = "";
+    errorMessage = "";
+    // The continuation is a new run: its timeline and its proposals start empty.
     resetAgentRun();
     await setupAgentListeners();
 
@@ -889,28 +1322,25 @@
     startRunTimer();
 
     try {
-      const payload = {
-        provider: aiProvider,
-        model: payloadModel,
-        prompt: promptText.trim(),
-        api_key: apiKey.trim(),
-        base_url: customBaseUrl.trim(),
-        yemot_token: yemotToken.trim(),
-        auto_apply: autoApply,
-        include_tree: includeTree
-      };
-      const started = await invoke("start_agent_run", { payload });
+      const started = await invoke("continue_agent_run", { payload, parentRunId });
       const id = /** @type {any} */ (started)?.run_id;
       if (id && !runId) runId = id;
+      taskChain = [...chain, text];
+      lastRunPrompt = text;
+      refineText = "";
     } catch (e) {
       teardownAgentListeners();
       stopRunTimer();
       agentRunning = false;
       isLoading = false;
       statusMessage = "";
-      errorMessage = t("comm_error", { error: e });
+      taskChain = chain;
+      refineError = isMissingCommand(e)
+        ? t("refine_unavailable")
+        : t("comm_error", { error: errorText(e) });
     } finally {
       agentStarting = false;
+      refineBusy = false;
     }
   }
 
@@ -1015,6 +1445,9 @@
       actionResults = merged;
       const done = list.filter((r) => r && r.ok).length;
       statusMessage = t("actions_done", { done, total: selected.length });
+      // The change log is the durable record of what reached the line.
+      await loadChangeLog();
+      if (selectedExtPath) void loadExtension(selectedExtPath);
     } catch (e) {
       approvalNotice = t("comm_error", { error: e });
       statusMessage = "";
@@ -1038,6 +1471,8 @@
       const r = /** @type {any} */ (await invoke("undo_action", { runId, actionId }));
       undoState = { ...undoState, [actionId]: r?.ok ? "done" : "failed" };
       undoMessages = { ...undoMessages, [actionId]: r?.message ?? "" };
+      await loadChangeLog();
+      if (selectedExtPath) void loadExtension(selectedExtPath);
     } catch (e) {
       console.error("undo_action failed:", e);
       // Only a missing command means "undo is unavailable in this build"; every
@@ -1076,7 +1511,7 @@
 
   async function runSubmitFlow() {
     if (!promptText.trim()) {
-      errorMessage = t("enter_prompt");
+      errorMessage = t("enter_task");
       return;
     }
     if (!yemotToken.trim()) {
@@ -1450,16 +1885,19 @@
     }
   }
 
-  /** @param {string} promptKey */
-  function setPreset(promptKey) {
-    promptText = t(promptKey);
-  }
-
   // ----- Token management (stored locally, deletable) -----
 
   async function clearToken() {
     yemotToken = "";
     tokenStatus = null;
+    // Without a token there is no line to show.
+    treeNodes = [];
+    treeOk = false;
+    treeError = "";
+    selectedExtPath = null;
+    selectedExtDisplay = null;
+    extDetail = null;
+    extError = "";
     await secretDelete("yemot_token");
   }
 
@@ -1493,8 +1931,18 @@
 
   /** Which modal is on top right now, or null. */
   let topModal = $derived(
-    showLoginModal ? "login" : showKnowledgeModal ? "knowledge" : null
+    showLoginModal ? "login" : showKnowledgeModal ? "knowledge" : showSettings ? "settings" : null
   );
+
+  function openSettings() {
+    rememberOpener();
+    showSettings = true;
+  }
+
+  function closeSettings() {
+    showSettings = false;
+    restoreOpenerFocus();
+  }
 
   function rememberOpener() {
     if (typeof document === "undefined") return;
@@ -1522,6 +1970,8 @@
       closeLoginModal();
     } else if (topModal === "knowledge") {
       closeKnowledgeModal();
+    } else if (topModal === "settings") {
+      closeSettings();
     }
   }
 
@@ -1603,9 +2053,19 @@
     yemotToken = token;
     await secretSet("yemot_token", token.trim());
     tokenStatus = { valid: true, message: t("login_success") };
+    // The system number is only known here; the connection chip needs it.
+    if (loginUsername.trim()) {
+      connectedSystem = loginUsername.trim();
+      try {
+        localStorage.setItem("ai_yemot_system", connectedSystem);
+      } catch (_) {}
+    }
     // Read the flag before closing — `closeLoginModal` clears it.
     const rerun = pendingRerun;
     closeLoginModal();
+    // A fresh session means a fresh view of the line.
+    void loadTree();
+    if (selectedExtPath) void loadExtension(selectedExtPath);
     // A run that died on `session_expired` picks up again by itself.
     if (rerun) {
       await handleSubmit();
@@ -1737,13 +2197,28 @@
   <!-- Top Navigation Bar -->
   <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
     <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white text-xl shadow-md">
+      <div class="flex items-center gap-3 min-w-0">
+        <div class="w-10 h-10 shrink-0 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white text-xl shadow-md">
           🤖
         </div>
-        <div>
+        <div class="min-w-0">
           <h1 class="text-lg font-bold text-slate-900 leading-tight">AI yemot</h1>
+          <p class="text-xs text-slate-500 leading-tight truncate">{t("app_subtitle")}</p>
         </div>
+
+        <!-- Connection chip: signed in, and proven so -->
+        <span
+          class="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border
+            {connected
+              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+              : 'bg-slate-100 text-slate-600 border-slate-300'}"
+        >
+          <span
+            class="w-1.5 h-1.5 rounded-full {connected ? 'bg-emerald-500' : 'bg-slate-400'}"
+            aria-hidden="true"
+          ></span>
+          <bdi>{connectionLabel}</bdi>
+        </span>
       </div>
 
       <div class="flex items-center gap-3">
@@ -1778,6 +2253,16 @@
             <span>{t("update_available", { version: updateInfo.latest_version })}</span>
           </button>
         {/if}
+
+        <button
+          type="button"
+          onclick={openSettings}
+          aria-label={t("open_settings")}
+          title={t("open_settings")}
+          class="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 transition focus-visible:outline-2 focus-visible:outline-blue-600"
+        >
+          ⚙️ {t("open_settings")}
+        </button>
       </div>
     </div>
   </header>
@@ -1809,6 +2294,15 @@
               {apiKey.trim() ? "✓" : "2"}
             </span>
             <span>{t("onboarding_step_api_key")}</span>
+            {#if !apiKey.trim()}
+              <button
+                type="button"
+                onclick={openSettings}
+                class="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700"
+              >
+                {t("open_settings")}
+              </button>
+            {/if}
           </li>
         </ol>
       </div>
@@ -1816,340 +2310,138 @@
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-      <!-- Left / Config Column -->
-      <div class="lg:col-span-1 space-y-6">
-        <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-5">
-          <h2 class="text-sm font-bold text-slate-800 flex items-center gap-2 border-b pb-3">
-            <span>{t("settings_title")}</span>
-          </h2>
+      <!-- Sidebar: the line itself (inline-start; RTL puts it on the right) -->
+      <aside class="lg:col-span-1 space-y-6">
+        <LineTree
+          nodes={treeNodes}
+          loading={treeLoading}
+          error={treeError}
+          hasToken={!!yemotToken.trim()}
+          selectedPath={selectedExtPath}
+          expanded={treeExpanded}
+          onSelect={selectExtension}
+          onToggle={toggleTreeNode}
+          onRefresh={loadTree}
+        />
 
-          <!-- Target Mode Selector -->
-          <div>
-            <span id="target-mode-label" class="block text-xs font-semibold text-slate-600 mb-2">{t("target_mode")}</span>
-            <div class="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl" role="group" aria-labelledby="target-mode-label">
-              <button
-                type="button"
-                onclick={() => setTargetMode('direct')}
-                class="py-1.5 px-3 text-xs font-medium rounded-lg transition {targetMode === 'direct' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-600 hover:text-slate-900'}"
-              >
-                {t("mode_direct")}
-              </button>
-              <button
-                type="button"
-                onclick={() => setTargetMode('script')}
-                class="py-1.5 px-3 text-xs font-medium rounded-lg transition {targetMode === 'script' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-600 hover:text-slate-900'}"
-              >
-                {t("mode_script")}
-              </button>
-            </div>
-          </div>
-
-          <!-- Provider selection if direct mode -->
-          {#if targetMode === 'direct'}
-            <div>
-              <label for="provider-select" class="block text-xs font-semibold text-slate-600 mb-1.5">{t("provider_label")}</label>
-              <select
-                id="provider-select"
-                bind:value={aiProvider}
-                onchange={handleProviderChange}
-                class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white"
-              >
-                <option value="claude">{t("provider_claude")}</option>
-                <option value="gemini">{t("provider_gemini")}</option>
-                <option value="openai">{t("provider_openai")}</option>
-                <option value="groq">{t("provider_groq")}</option>
-                <option value="custom">{t("provider_custom")}</option>
-              </select>
-            </div>
-
-            <!-- Model: pick from the known list or enter a manual ID -->
-            <div>
-              <label for="model-select" class="block text-xs font-semibold text-slate-600 mb-1.5">{t("model_label")}</label>
-              <div class="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-xl mb-2">
-                <button
-                  type="button"
-                  onclick={() => modelSource = 'list'}
-                  disabled={aiProvider === 'custom'}
-                  class="py-1.5 px-3 text-xs font-medium rounded-lg transition disabled:opacity-40 {modelSource === 'list' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-600 hover:text-slate-900'}"
-                >
-                  {t("model_from_list")}
-                </button>
-                <button
-                  type="button"
-                  onclick={() => modelSource = 'manual'}
-                  class="py-1.5 px-3 text-xs font-medium rounded-lg transition {modelSource === 'manual' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-600 hover:text-slate-900'}"
-                >
-                  {t("model_manual")}
-                </button>
-              </div>
-
-              {#if aiProvider !== 'custom' && modelSource === 'list'}
-                <select
-                  id="model-select"
-                  bind:value={selectedModel}
-                  class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white"
-                >
-                  {#each getProviderModels(aiProvider) as m}
-                    <option value={m.id}>{m.label ? t(m.label) : m.id}{m.tag ? ` — ${t(m.tag)}` : ""}</option>
-                  {/each}
-                </select>
-              {:else}
-                <input
-                  id="model-select"
-                  type="text"
-                  dir="ltr"
-                  bind:value={customModel}
-                  placeholder={t("model_manual_placeholder")}
-                  class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none text-slate-600"
-                />
-              {/if}
-            </div>
-          {:else}
-            <!-- Model Type (Regular / Pro) — script mode -->
-            <div>
-              <span id="model-type-label" class="block text-xs font-semibold text-slate-600 mb-1.5">{t("model_label")}</span>
-              <div class="space-y-1.5" role="radiogroup" aria-labelledby="model-type-label">
-                <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                  <input type="radio" bind:group={modelType} value="regular" class="text-blue-600 focus:ring-blue-500">
-                  <span>{t("model_regular")}</span>
-                </label>
-                <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                  <input type="radio" bind:group={modelType} value="pro" class="text-blue-600 focus:ring-blue-500">
-                  <span>{t("model_pro")}</span>
-                </label>
-              </div>
-            </div>
-          {/if}
-
-          <!-- Yemot Token -->
-          <div>
-            <div class="flex items-center justify-between mb-1.5">
-              <label for="yemot-token-input" class="text-xs font-semibold text-slate-600">{t("token_label")}</label>
-              <div class="flex items-center gap-2">
-                <button
-                  type="button"
-                  onclick={() => openLoginModal()}
-                  class="text-xs text-blue-600 hover:underline"
-                >
-                  {t("get_token")}
-                </button>
-                {#if yemotToken}
-                  <button
-                    type="button"
-                    onclick={clearToken}
-                    title={t("clear_token")}
-                    aria-label={t("clear_token")}
-                    class="text-xs text-rose-600 hover:text-rose-700"
-                  >
-                    🗑 {t("clear_token")}
-                  </button>
-                {/if}
-                <button
-                  type="button"
-                  onclick={() => showToken = !showToken}
-                  class="text-xs text-blue-600 hover:underline"
-                >
-                  {showToken ? t("hide") : t("show")}
-                </button>
-              </div>
-            </div>
-            <div class="relative">
-              <input
-                id="yemot-token-input"
-                type={showToken ? "text" : "password"}
-                bind:value={yemotToken}
-                onchange={saveYemotToken}
-                placeholder={t("token_placeholder")}
-                class="w-full text-xs rounded-lg border border-slate-300 p-2 {rtl ? 'pr-2 pl-14' : 'pl-2 pr-14'} focus:ring-2 focus:ring-blue-500 focus:outline-none"
-              />
-              <button
-                type="button"
-                onclick={checkToken}
-                class="absolute {rtl ? 'left-1' : 'right-1'} top-1 bottom-1 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded-md transition"
-              >
-                {t("check")}
-              </button>
-            </div>
-            {#if tokenStatus}
-              <p class="text-xs mt-1.5 {tokenStatus.valid ? 'text-emerald-700' : 'text-rose-700'} font-medium">
-                {tokenStatus.valid ? '✅ ' : '❌ '}{tokenStatus.message}
-              </p>
-            {/if}
-            <p class="text-xs text-slate-500 mt-1.5 leading-relaxed">🔒 {t("local_note")}</p>
-          </div>
-
-          <!-- Personal API Key (no system key exists) -->
-          <div class="border-t pt-4">
-            <div class="flex items-center justify-between mb-1.5">
-              <label for="api-key-input" class="text-xs font-semibold text-slate-600">{t("api_key_label")}</label>
-              <button
-                type="button"
-                onclick={() => showApiKey = !showApiKey}
-                class="text-xs text-blue-600 hover:underline"
-              >
-                {showApiKey ? t("hide") : t("show")}
-              </button>
-            </div>
-            <input
-              id="api-key-input"
-              type={showApiKey ? "text" : "password"}
-              bind:value={apiKeys[aiProvider]}
-              onchange={saveApiKey}
-              placeholder={t("api_key_placeholder")}
-              class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-            />
-            <p class="text-xs text-slate-500 mt-1.5">
-              {targetMode === 'direct' ? t("api_key_hint_direct") : t("api_key_hint_script")}
-            </p>
-            <p class="text-xs text-slate-500 mt-1 leading-relaxed">🔒 {t("secrets_note")}</p>
-          </div>
-
-          <!-- Preview & approve — only meaningful in the legacy script flow -->
-          {#if targetMode === 'script'}
-            <div class="border-t pt-4">
-              <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                <input type="checkbox" bind:checked={isPreviewMode} class="rounded text-blue-600 focus:ring-blue-500">
-                <span class="font-medium">{t("preview_mode")}</span>
-              </label>
-            </div>
-          {/if}
-
-          <!-- Agent-run settings (direct mode) -->
-          {#if targetMode === 'direct'}
-            <div class="border-t pt-4">
-              <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  bind:checked={autoApply}
-                  onchange={saveAgentToggles}
-                  class="rounded text-amber-600 focus:ring-amber-500"
-                >
-                <span class="font-medium">{t("auto_apply_label")}</span>
-              </label>
-              {#if autoApply}
-                <p class="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2 mt-1.5 leading-relaxed">
-                  ⚠️ {t("auto_apply_warning")}
-                </p>
-              {:else}
-                <p class="text-xs text-slate-500 mt-1 leading-relaxed">{t("auto_apply_warning")}</p>
-              {/if}
-            </div>
-          {/if}
-
-          <!-- Advanced (collapsed by default) -->
-          <details class="border-t pt-4 group" open={aiProvider === 'custom'}>
-            <summary class="text-xs font-semibold text-slate-600 cursor-pointer select-none list-none flex items-center gap-1.5">
-              <span class="transition group-open:rotate-90 inline-block">▸</span>
-              <span>{t("advanced_settings")}</span>
-            </summary>
-
-            <div class="space-y-4 pt-3">
-              {#if targetMode === 'direct' && aiProvider === 'custom'}
-                <div>
-                  <label for="custom-api-url" class="block text-xs font-semibold text-slate-600 mb-1.5">{t("custom_url_label")}</label>
-                  <input
-                    id="custom-api-url"
-                    type="text"
-                    dir="ltr"
-                    bind:value={customBaseUrl}
-                    onchange={saveCustomBaseUrl}
-                    placeholder={t("custom_url_placeholder")}
-                    class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none text-slate-600"
-                  />
-                  <p class="text-xs text-slate-500 mt-1.5 leading-relaxed">{t("custom_url_hint")}</p>
-                </div>
-              {/if}
-
-              {#if targetMode === 'script'}
-                <div>
-                  <label for="script-url-input" class="block text-xs font-semibold text-slate-600 mb-1">{t("script_url_label")}</label>
-                  <input
-                    id="script-url-input"
-                    type="text"
-                    dir="ltr"
-                    bind:value={scriptUrl}
-                    class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none text-slate-600"
-                  />
-                </div>
-              {/if}
-
-              {#if targetMode === 'direct'}
-                <div>
-                  <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      bind:checked={includeTree}
-                      onchange={saveAgentToggles}
-                      class="rounded text-blue-600 focus:ring-blue-500"
-                    >
-                    <span class="font-medium">{t("include_tree_label")}</span>
-                  </label>
-                  <p class="text-xs text-slate-500 mt-1 leading-relaxed">{t("include_tree_hint")}</p>
-                </div>
-              {/if}
-
-              <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                <input type="checkbox" bind:checked={logoutOnFinish} class="rounded text-blue-600 focus:ring-blue-500">
-                <span>{t("logout_on_finish")}</span>
-              </label>
-            </div>
-          </details>
-        </div>
-      </div>
+        <ExtensionInspector
+          detail={extDetail}
+          loading={extLoading}
+          error={extError}
+          selectedDisplay={selectedExtDisplay}
+          onRefresh={refreshExtension}
+          onUseAsContext={addInspectedToContext}
+          {rtl}
+        />
+      </aside>
 
       <!-- Right / Main Action Column -->
       <div class="lg:col-span-2 space-y-6">
         <!-- Input Form Card -->
         <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
           <form onsubmit={handleSubmit} class="space-y-4">
+            <!-- Context chips: extensions pinned onto the task -->
+            {#if contextExts.length > 0}
+              <div class="rounded-xl border border-blue-200 bg-blue-50/60 p-3 space-y-1.5">
+                <div class="flex items-baseline gap-2 flex-wrap">
+                  <span class="text-xs font-bold text-slate-700">{t("context_title")}</span>
+                  <span class="text-xs text-slate-500">{t("context_hint")}</span>
+                </div>
+                <ul class="flex flex-wrap gap-1.5">
+                  {#each contextExts as c (c.path)}
+                    <li>
+                      <span class="inline-flex items-center gap-1 rounded-lg bg-white border border-blue-200 px-2 py-0.5 text-xs">
+                        <span class="font-mono font-bold text-blue-800">
+                          <bdi dir="ltr">{c.display}</bdi>
+                        </span>
+                        <button
+                          type="button"
+                          onclick={() => removeContextExtension(c.path)}
+                          aria-label={`${t("context_remove")}: ${c.display}`}
+                          title={t("context_remove")}
+                          class="text-slate-400 hover:text-rose-700 rounded focus-visible:outline-2 focus-visible:outline-blue-600"
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    </li>
+                  {/each}
+                </ul>
+              </div>
+            {/if}
+
             <div>
               <div class="flex items-center justify-between mb-2">
-                <label for="prompt-textarea" class="text-sm font-bold text-slate-800">{t("prompt_label")}</label>
-                <span class="text-xs text-slate-500">{t("prompt_hint")}</span>
+                <label for="prompt-textarea" class="text-sm font-bold text-slate-800">{t("task_label")}</label>
+                <span class="text-xs text-slate-500">{t("task_hint")}</span>
               </div>
               <textarea
                 id="prompt-textarea"
                 rows="5"
                 bind:value={promptText}
                 onkeydown={handlePromptKeydown}
-                placeholder={t("prompt_placeholder")}
+                placeholder={t("task_placeholder")}
                 class="w-full rounded-xl border border-slate-300 p-3.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none leading-relaxed resize-y"
               ></textarea>
               <p class="text-xs text-slate-500 mt-1.5">⌨️ {t("prompt_submit_hint")}</p>
             </div>
 
-            <!-- Quick Presets -->
-            <div class="flex flex-wrap gap-2 pt-1">
-              <span class="text-xs text-slate-500 self-center">{t("quick_presets")}</span>
-              <button
-                type="button"
-                onclick={() => setPreset("preset_menu_prompt")}
-                class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1 rounded-lg transition"
-              >
-                {t("preset_menu")}
-              </button>
-              <button
-                type="button"
-                onclick={() => setPreset("preset_play_prompt")}
-                class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1 rounded-lg transition"
-              >
-                {t("preset_play")}
-              </button>
-              <button
-                type="button"
-                onclick={() => setPreset("preset_record_prompt")}
-                class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1 rounded-lg transition"
-              >
-                {t("preset_record")}
-              </button>
-              <button
-                type="button"
-                onclick={() => setPreset("preset_human_prompt")}
-                class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1 rounded-lg transition"
-              >
-                {t("preset_human")}
-              </button>
+            <!-- Attachments: audio files the model may upload to the line -->
+            <div class="space-y-1.5">
+              <div class="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onclick={pickAttachments}
+                  class="text-xs px-2.5 py-1 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 transition focus-visible:outline-2 focus-visible:outline-blue-600"
+                >
+                  🎵 {t("attach_audio")}
+                </button>
+                {#if attachments.length > 0}
+                  <span class="text-xs text-slate-500">{t("attachments_title")}</span>
+                {/if}
+              </div>
+
+              {#if attachments.length > 0}
+                <ul class="flex flex-wrap gap-1.5">
+                  {#each attachments as a (a.local_path)}
+                    <li>
+                      <span class="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-2 py-0.5 text-xs">
+                        <span class="font-mono text-slate-500">{a.id}</span>
+                        <span class="text-slate-700 max-w-[14rem] truncate">
+                          <bdi dir="ltr">{a.name}</bdi>
+                        </span>
+                        {#if formatSize(a.size)}
+                          <span class="text-slate-500" dir="ltr">{formatSize(a.size)}</span>
+                        {/if}
+                        <button
+                          type="button"
+                          onclick={() => removeAttachment(a.id)}
+                          aria-label={`${t("attachment_remove")}: ${a.name}`}
+                          title={t("attachment_remove")}
+                          class="text-slate-400 hover:text-rose-700 rounded focus-visible:outline-2 focus-visible:outline-blue-600"
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+
+              {#if attachError}
+                <p class="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                  {attachError}
+                </p>
+              {/if}
             </div>
+
+            <!-- Ready-made tasks (editable, persisted locally) -->
+            <PresetBar
+              {presets}
+              onUse={(/** @type {string} */ text) => (promptText = text)}
+              onChange={updatePresets}
+              onRestoreDefaults={restoreDefaultPresets}
+            />
 
             {#if errorMessage}
               <div class="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl flex items-center gap-2 flex-wrap">
@@ -2178,18 +2470,32 @@
               <button
                 type="submit"
                 disabled={isLoading}
-                class="w-full sm:w-auto px-7 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-sm rounded-xl shadow-md transition disabled:opacity-50 flex items-center justify-center gap-2"
+                class="w-full sm:w-auto px-7 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-sm rounded-xl shadow-md transition disabled:opacity-50 flex items-center justify-center gap-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700"
               >
                 {#if isLoading}
                   <span class="animate-spin">⏳</span>
-                  <span>{t("processing")}</span>
+                  <span>{t("proposing_changes")}</span>
                 {:else}
-                  <span>{t("submit")}</span>
+                  <span>{t("propose_changes")}</span>
                 {/if}
               </button>
             </div>
           </form>
         </div>
+
+        <!-- A continued task states what it is continuing from -->
+        {#if taskChain.length > 1}
+          <div class="bg-white rounded-2xl border border-slate-200 px-5 py-3 shadow-sm">
+            <p class="text-xs font-bold text-slate-700">
+              {t("refine_parent", { previous: taskChain[taskChain.length - 2] })}
+            </p>
+            <ol class="mt-1.5 space-y-0.5 text-xs text-slate-500 list-decimal list-inside">
+              {#each taskChain as instruction, i (i)}
+                <li class="truncate" title={instruction}>{instruction}</li>
+              {/each}
+            </ol>
+          </div>
+        {/if}
 
         <!-- Agent Progress Panel (direct mode) -->
         {#if agentTimeline.length > 0 || agentRunning || agentFinish || agentError}
@@ -2202,7 +2508,8 @@
             retryNotice={agentRetryNotice}
             error={agentError}
             finish={agentFinish}
-            finishLine={agentFinishLine}
+            statsLine={runStatsLine}
+            costLine={runCostLine}
             elapsedLabel={runElapsedLabel}
             elapsedMs={runElapsedMs}
             awaitingText={awaitingTurnText}
@@ -2238,6 +2545,43 @@
             onToggleAction={handleActionToggled}
             onUndo={undoAction}
           />
+        {/if}
+
+        <!-- "דייק את המשימה" — one more instruction, continuing this run -->
+        {#if agentFinish && runId && !agentRunning}
+          <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-2">
+            <label for="refine-input" class="block text-sm font-bold text-slate-800">
+              {t("refine_title")}
+            </label>
+            <div class="flex items-center gap-2 flex-wrap">
+              <input
+                id="refine-input"
+                type="text"
+                bind:value={refineText}
+                onkeydown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void continueAgentRun();
+                  }
+                }}
+                placeholder={t("refine_placeholder")}
+                class="flex-1 min-w-[12rem] text-sm rounded-xl border border-slate-300 p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              />
+              <button
+                type="button"
+                onclick={continueAgentRun}
+                disabled={refineBusy || isLoading || !refineText.trim()}
+                class="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700"
+              >
+                {t("refine_send")}
+              </button>
+            </div>
+            {#if refineError}
+              <p class="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                {refineError}
+              </p>
+            {/if}
+          </div>
         {/if}
 
         <!-- Action Preview List Card (If parsed actions exist) -->
@@ -2334,7 +2678,7 @@
         {#if resultOutput && !agentFinish}
           <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-3">
             <div class="flex items-center justify-between gap-2">
-              <h3 class="text-xs font-bold text-slate-700">{t("raw_output_title")}</h3>
+              <h3 class="text-xs font-bold text-slate-700">{t("final_answer_title")}</h3>
               <button
                 type="button"
                 onclick={copyResultOutput}
@@ -2346,6 +2690,16 @@
             <pre class="bg-slate-900 text-slate-100 p-4 rounded-xl text-xs font-mono whitespace-pre-wrap overflow-x-auto max-h-80">{resultOutput}</pre>
           </div>
         {/if}
+
+        <!-- יומן שינויים — what actually reached the line, across runs -->
+        <ChangeLog
+          changes={appliedChanges}
+          loading={changeLogLoading}
+          error={changeLogError}
+          undoState={changeLogUndoState}
+          onRefresh={loadChangeLog}
+          onUndo={undoLoggedChange}
+        />
       </div>
     </div>
   </main>
@@ -2379,6 +2733,44 @@
       onCopy={copySelectedContent}
       onContentClick={handleContentClick}
       onContentElement={(/** @type {HTMLElement | null} */ el) => (contentContainerRef = el)}
+    />
+  {/if}
+
+  <!-- Settings drawer (everything that used to be the left-hand card) -->
+  {#if showSettings}
+    <SettingsPanel
+      {targetMode}
+      onTargetMode={setTargetMode}
+      bind:aiProvider
+      onProviderChange={handleProviderChange}
+      bind:modelType
+      bind:modelSource
+      bind:selectedModel
+      bind:customModel
+      bind:customBaseUrl
+      onSaveCustomBaseUrl={saveCustomBaseUrl}
+      {getProviderModels}
+      bind:yemotToken
+      bind:showToken
+      {tokenStatus}
+      onSaveYemotToken={saveYemotToken}
+      onCheckToken={checkToken}
+      onClearToken={clearToken}
+      onOpenLogin={() => {
+        showSettings = false;
+        openLoginModal();
+      }}
+      {apiKeys}
+      bind:showApiKey
+      onSaveApiKey={saveApiKey}
+      bind:autoApply
+      bind:includeTree
+      onSaveAgentToggles={saveAgentToggles}
+      bind:logoutOnFinish
+      bind:isPreviewMode
+      bind:scriptUrl
+      {rtl}
+      onClose={closeSettings}
     />
   {/if}
 
