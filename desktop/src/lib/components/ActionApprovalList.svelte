@@ -40,7 +40,13 @@
      * selection that no longer exists, so the page disarms it.
      * @type {(() => void) | undefined}
      */
-    onToggleAction = undefined
+    onToggleAction = undefined,
+    /**
+     * The proposals belong to a task loaded from the history: the run that made
+     * them is gone, so there is nothing to approve or undo through this panel.
+     * The rows stay on screen as a record of what that task proposed.
+     */
+    readOnly = false
   } = $props();
 
   /**
@@ -102,6 +108,11 @@
       <h3 class="text-sm font-bold text-slate-800">{t("proposed_changes_title")}</h3>
       <p class="text-xs text-slate-500">{t("proposed_changes_hint")}</p>
     </div>
+    {#if readOnly}
+      <p class="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
+        {t("history_readonly_hint")}
+      </p>
+    {:else}
     <div class="flex items-center gap-2 flex-wrap">
       <button
         type="button"
@@ -126,6 +137,7 @@
         {t("approve_selected_count", { count: selectedCount })}
       </button>
     </div>
+    {/if}
   </div>
 
   {#if notice}
@@ -134,7 +146,7 @@
     </div>
   {/if}
 
-  {#if confirmRisky}
+  {#if confirmRisky && !readOnly}
     <div class="text-xs bg-amber-50 border border-amber-300 rounded-xl p-3 space-y-2">
       <div class="font-bold text-amber-900">⚠️ {t("confirm_risky_title")}</div>
       <p class="text-amber-900 leading-relaxed">
@@ -169,14 +181,16 @@
       {@const applied = isApplied(action)}
       <div class="py-3 space-y-2 {applied ? 'opacity-70 bg-emerald-50/40 rounded-lg px-2' : ''}">
         <div class="flex items-start gap-3">
-          <input
-            type="checkbox"
-            bind:checked={action.selected}
-            onchange={() => onToggleAction?.()}
-            disabled={applied}
-            aria-label={action.path}
-            class="mt-1 rounded text-blue-600 focus:ring-blue-500 disabled:opacity-50"
-          />
+          {#if !readOnly}
+            <input
+              type="checkbox"
+              bind:checked={action.selected}
+              onchange={() => onToggleAction?.()}
+              disabled={applied}
+              aria-label={action.path}
+              class="mt-1 rounded text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+            />
+          {/if}
           <div class="flex-1 min-w-0 text-xs space-y-1.5">
             <div class="flex items-center gap-2 flex-wrap">
               <span class="bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded font-mono font-bold">
@@ -352,7 +366,7 @@
                     </details>
                   {/if}
                 {/if}
-                {#if res.ok && canUndo(action.kind)}
+                {#if res.ok && canUndo(action.kind) && !readOnly}
                   <div class="mt-1.5 flex items-center gap-2 flex-wrap">
                     {#if undoState[action.id] === "done"}
                       <span class="font-semibold text-slate-700">↩ {t("undo_done")}</span>
