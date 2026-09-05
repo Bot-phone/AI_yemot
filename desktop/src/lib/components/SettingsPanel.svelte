@@ -8,6 +8,7 @@
    * them and calls the page's save handlers. The legacy GAS "script" mode is
    * kept, demoted into the collapsed "מתקדם" section.
    */
+  import { DEFAULT_SCRIPT_URL } from "$lib/lineEditor.js";
   import { t } from "$lib/i18n.svelte.js";
 
   let {
@@ -209,8 +210,23 @@
             type="text"
             dir="ltr"
             bind:value={scriptUrl}
+            placeholder={DEFAULT_SCRIPT_URL}
             class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none text-slate-600"
           />
+          <p class="text-xs text-slate-500 mt-1 leading-relaxed">
+            {scriptUrl.trim() && scriptUrl.trim() !== DEFAULT_SCRIPT_URL
+              ? t("script_url_custom_hint")
+              : t("script_url_default_hint")}
+            {#if scriptUrl.trim() !== DEFAULT_SCRIPT_URL}
+              <button
+                type="button"
+                onclick={() => (scriptUrl = DEFAULT_SCRIPT_URL)}
+                class="text-blue-600 hover:underline focus-visible:outline-2 focus-visible:outline-blue-600"
+              >
+                {t("script_url_reset")}
+              </button>
+            {/if}
+          </p>
         </div>
       {/if}
 

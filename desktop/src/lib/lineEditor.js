@@ -20,6 +20,20 @@ export function errorText(e) {
 }
 
 /**
+ * The relay server (Google Apps Script) used unless the user enters another
+ * URL. An empty field, or the pre-1.0 placeholder, falls back to it.
+ */
+export const DEFAULT_SCRIPT_URL =
+  "https://script.google.com/macros/s/AKfycbxSGOU5SD1yCvn7kRiF9N8rhpwT-traCP6Vyk4w6otweC36h8lyb_YEyxmNKnU60he7/exec";
+
+/** @param {string | null | undefined} url */
+export function resolveScriptUrl(url) {
+  const u = String(url ?? "").trim();
+  if (!u || /REPLACE_ME/.test(u)) return DEFAULT_SCRIPT_URL;
+  return u;
+}
+
+/**
  * A Tauri command that this build does not register rejects with a
  * "not found / not allowed" style message. That is not a real failure — the
  * feature simply is not in this binary — so the UI degrades instead of

@@ -25,7 +25,9 @@
     loadPresets,
     mimeFromName,
     savePresets,
-    seedPresets
+    seedPresets,
+    DEFAULT_SCRIPT_URL,
+    resolveScriptUrl
   } from "$lib/lineEditor.js";
 
   // Interface direction (reactive to language changes)
@@ -53,7 +55,7 @@
   let logoutOnFinish = $state(false);
   /** Matches `SCRIPT_DISABLED_PREFIX` in src-tauri/src/ai.rs. */
   const SCRIPT_DISABLED_PREFIX = "SCRIPT_DISABLED: ";
-  let scriptUrl = $state("https://script.google.com/macros/s/AKfycbz_REPLACE_ME/exec");
+  let scriptUrl = $state(DEFAULT_SCRIPT_URL);
 
   // Known model list per direct provider (first two are the classic Regular/Pro).
   // tag = optional i18n key appended to the label; label = i18n key replacing the raw id.
@@ -306,8 +308,7 @@
   onMount(async () => {
     // Load local storage if previously saved
     try {
-      const savedScriptUrl = localStorage.getItem("ai_yemot_script_url");
-      if (savedScriptUrl) scriptUrl = savedScriptUrl;
+      scriptUrl = resolveScriptUrl(localStorage.getItem("ai_yemot_script_url"));
 
       const savedTargetMode = localStorage.getItem("ai_yemot_target_mode");
       if (savedTargetMode === "script" || savedTargetMode === "direct") {
@@ -500,6 +501,7 @@
     await saveApiKey();
     await saveCustomBaseUrl();
     try {
+      scriptUrl = resolveScriptUrl(scriptUrl);
       localStorage.setItem("ai_yemot_script_url", scriptUrl);
       localStorage.setItem("ai_yemot_target_mode", targetMode);
       localStorage.setItem("ai_yemot_provider", aiProvider);
@@ -1849,7 +1851,7 @@
         api_key: apiKey.trim(),
         is_preview: isPreviewMode,
         logout: logoutOnFinish,
-        script_url: scriptUrl.trim(),
+        script_url: resolveScriptUrl(scriptUrl),
         base_url: ""
       };
 
