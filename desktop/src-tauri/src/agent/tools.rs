@@ -741,7 +741,8 @@ async fn upload_text_file(ctx: &ToolCtx, input: &Value, tool_use_id: &str) -> To
 }
 
 /// `ivr2:/1/000.wav` → (`ivr2:/1`, `000.wav`).
-fn dir_and_name(canon_file_path: &str) -> (String, String) {
+/// Shared with `runner`, which re-checks the destination folder at apply time.
+pub(super) fn dir_and_name(canon_file_path: &str) -> (String, String) {
     match canon_file_path.rsplit_once('/') {
         Some(("ivr2:", name)) => ("ivr2:/".to_string(), name.to_string()),
         Some((dir, name)) => (dir.to_string(), name.to_string()),
@@ -769,7 +770,9 @@ fn audio_action(
         id: id.to_string(),
         tool_use_id: tool_use_id.to_string(),
         kind: "upload_audio_file".to_string(),
-        path: canon.to_string(),
+        // `path` is the display form everywhere else; `canon_path` is what the
+        // apply uses. See the doc on `ProposedAction`.
+        path: yemot::display_path(canon),
         canon_path: canon.to_string(),
         params: vec![
             ActionParam { key: "file".to_string(), value: att.name.clone() },
@@ -960,6 +963,10 @@ mod tests {
         let att = attachment();
         let fresh = audio_action("a_1", "toolu_1", "ivr2:/1/000.wav", &att, None, "ברכה");
         assert_eq!(fresh.kind, "upload_audio_file");
+        // `path` is the display form, `canon_path` the executable one — the
+        // same split every other action kind uses.
+        assert_eq!(fresh.path, "/1/000.wav");
+        assert_eq!(fresh.canon_path, "ivr2:/1/000.wav");
         assert_eq!(fresh.risk, "low");
         assert!(!fresh.exists);
         assert!(fresh.warnings.is_empty());
