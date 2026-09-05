@@ -23,13 +23,38 @@ All new struct fields are `snake_case` (serde default). Tauri command **argument
   "base_url": "",                 // optional custom endpoint/base for direct mode
   "yemot_token": "…",             // held privately in Rust; never serialized outward
   "auto_apply": false,            // true = mutating tools execute immediately and real results feed the model
-  "include_tree": true            // append a ≤20-line "[מצב נוכחי]" root tree after the first user message
+  "include_tree": true,           // append a ≤20-line "[מצב נוכחי]" root tree after the first user message
+  "attachments": []               // optional (serde default); audio files the user picked for this task
 }
+// Attachment
+{ "id": "f1", "name": "ברכה.mp3", "local_path": "C:/…/ברכה.mp3", "size": 20480, "mime": "audio/mpeg" }
 // AgentRunStarted
 { "run_id": "r_…" }
 ```
 
 Returns immediately; the loop runs in the background and reports through events. A second concurrent run is rejected with an error string.
+
+**Attachments.** Validated at run start (an error rejects the whole run, nothing is emitted): the name must end in one of `wav, mp3, m4a, ogg, wma, aac`, a non-empty `mime` must start with `audio/`, the size must be ≤ 25 MiB (declared *and* on disk), the ids must be unique, and `local_path` must exist and be a regular file. The list appears in the first user message, after the `[מצב נוכחי]` tree block:
+
+```
+[קבצים מצורפים]
+- f1: ברכה.mp3 (20 KB, audio/mpeg)
+```
+
+`local_path` never reaches the model: it names an `id` from that block, and `upload_audio_file` resolves the id against **this run's own attachment list** only.
+
+### `continue_agent_run(payload: AgentRunPayload, parentRunId: string) -> Result<AgentRunStarted, String>`
+
+Refines a finished task instead of starting over. The new run replays the parent's full transcript (the system blocks are regenerated from consts, so they are byte-identical and the provider's cached prefix still hits) and appends one user message: the status of the parent's proposals, then `payload.prompt`, then the `[קבצים מצורפים]` list when this continuation attached more files.
+
+```
+[מצב ההצעות הקודמות]
+- a_1 /3: בוצע
+- a_2 /4: בוטל
+- a_3 /5: לא אושר
+```
+
+`בוצע` / `בוטל` / `לא אושר` come from the write state of the parent run, not from the proposal list — an id is `בוטל` once `undo_action` reversed it. The events are exactly a fresh run's (`agent:started` … `agent:finished`) under a **new** `run_id`. Errors (Hebrew, nothing started): the parent is not the run in the registry any more, the parent is still running, or the parent transcript alone already exceeds `CONTEXT_HARD_LIMIT` (`"המשימה ארוכה מדי להמשך, התחל משימה חדשה"`). `include_tree` is ignored — the tree is already in the transcript.
 
 ### `cancel_agent_run(runId: string) -> Result<(), String>`
 
@@ -52,6 +77,27 @@ Executes the selected proposed actions (grouped per extension, one `UpdateExtens
 ### `undo_action(runId: string, actionId: string) -> Result<ActionApplyResult, String>`
 
 Reverses one already-applied action by writing back the values `approve_actions` recorded as `undo`. Re-reads the server first and refuses (`ok: false`, no write) if the state has moved since the apply — see "Approval and undo lifecycle" below.
+
+### `list_applied_changes() -> Result<AppliedChange[], String>`
+
+The change log ("יומן שינויים") of every run still retained in the write state, newest first. It is read from the write state rather than from the run handle, so it survives a page reload and a later run evicting the handle.
+
+```jsonc
+// AppliedChange
+{
+  "run_id": "r_…", "action_id": "a_1",
+  "kind": "set_extension_params" | "upload_text_file" | "upload_audio_file",
+  "path": "/1/2",                     // as shown on the action
+  "display": "/1/2",                  // canonical path in display form
+  "applied_at_ms": 1757000000000,
+  "params": [ { "key": "type", "value": "menu" } ],
+  "undo_available": true,             // false for audio uploads, failed undos and already-undone rows
+  "undone": false,                    // set by undo_action; the row stays in the log
+  "label": "עדכון 3 הגדרות ב-/1/2"     // short Hebrew row label ("העלאת קובץ 000.wav ל-/1", …)
+}
+```
+
+Rows are pruned with the rest of the write state (50 runs / 1 hour, cleared on logout). Re-approving an id after an undo replaces its row instead of adding a second one.
 
 ### `execute_yemot_actions(token, path, params: {key,value}[]) -> ExtensionUpdateResult`
 
@@ -103,7 +149,7 @@ Rules the UI relies on:
 {
   "id": "a_1",
   "tool_use_id": "toolu_…",
-  "kind": "set_extension_params" | "upload_text_file",
+  "kind": "set_extension_params" | "upload_text_file" | "upload_audio_file",
   "path": "/3",                       // display form; Rust canonicalizes to ivr2:/3
   "params": [ { "key": "type", "value": "menu" } ],
   "contents": null,                   // for upload_text_file
@@ -114,6 +160,19 @@ Rules the UI relies on:
   "warnings": [ "מפתח לא מתועד: enter_idd" ],
   "previous": null,                   // upload_text_file only: file contents before the write (null = file did not exist)
   "snapshot_hash": "true:1234"        // fingerprint of ext.ini / the file as read; approval refuses to write if it no longer matches
+}
+
+// ProposedAction, kind = "upload_audio_file"
+{
+  "id": "a_2", "kind": "upload_audio_file",
+  "path": "ivr2:/1/000.wav",          // the destination file; must end in .wav (the system converts the source)
+  "params": [ { "key": "file", "value": "ברכה.mp3" }, { "key": "size", "value": "20 KB" } ],
+  "contents": null,
+  "risk": "overwrite",                // "overwrite" when the destination already holds that file, else "low"
+  "exists": true,
+  "diff": [ { "key": "file", "before": "000.wav", "after": "ברכה.mp3", "kind": "changed" } ],
+  "warnings": [ "לא ניתן לבטל העלאת שמע אוטומטית" ],   // only when the destination exists
+  "previous": null, "snapshot_hash": null
 }
 
 // usage (agent:finished)
@@ -127,7 +186,7 @@ Rules the UI relies on:
 
 ## Tools
 
-Ten tools are exposed to the model, in this fixed order (`agent/tools.rs::tool_specs`, byte-stable across turns so provider prompt caching keeps hitting). Read-only tools of a turn run in parallel; mutating tools run one at a time, sequentially, with cancellation honoured only *between* them.
+Eleven tools are exposed to the model, in this fixed order (`agent/tools.rs::tool_specs`, byte-stable across turns so provider prompt caching keeps hitting). Read-only tools of a turn run in parallel; mutating tools run one at a time, sequentially, with cancellation honoured only *between* them.
 
 | Tool | Kind | Result cap (tokens) |
 | --- | --- | --- |
@@ -141,10 +200,13 @@ Ten tools are exposed to the model, in this fixed order (`agent/tools.rs::tool_s
 | `get_system_info` | read | 300 |
 | `set_extension_params` | mutating | 3,000 (backstop) |
 | `upload_text_file` | mutating | 3,000 (backstop) |
+| `upload_audio_file` | mutating | 3,000 (backstop) |
 
 Every result is capped on a whole-character boundary with a Hebrew truncation note appended; nothing above `MAX_RESULT_TOKENS` (3,000) is ever returned, and each read-only tool has its own tighter cap. A capability that must never be reachable from a prompt is listed in `DENIED_TOOLS` (`file_action`, `delete_extension`, `run_tzintuk`, `run_campaign`, `schedule_campaign`, `send_sms`, `send_fax`, `transfer_units`, `set_password`, `set_customer_details`, `kill_session`, `call_action`) and is refused before dispatch even if a future refactor adds it to the Yemot client.
 
 `set_extension_params` requires a prior `get_extension_config` call on the same path in the same run (`READ_FIRST_REQUIRED` otherwise) and merges only the keys sent — a new extension must also send `type`. `upload_text_file` refuses `ext.ini` paths outright (`EXT_INI_NOT_ALLOWED`; it would replace the whole file instead of merging keys). Both are deferred: unless `auto_apply` is set, the call returns a byte-identical `status=pending_approval` receipt and the real write waits for `approve_actions`.
+
+`upload_audio_file` takes `{ dest_path, attachment_id, reason }` and is **always** in the list, attachments or not, so the serialized tool array stays byte-stable across runs; with no attachments it answers `"אין קבצים מצורפים למשימה"`. `dest_path` must name a `.wav` destination (`DEST_MUST_BE_WAV`) — Yemot's `UploadFile` is called with `convertAudio=1`, which converts any popular source format but requires the path to already carry the converted `.wav` name. Existence of the destination is checked with `list_files` and fails closed (`READ_FAILED`) rather than guessing. The apply reads the file from disk at approval time (never at proposal time) and POSTs one `multipart/form-data` request to `UploadFile` with `token`, `path`, `convertAudio=1` and the file part `qqfile`.
 
 ## Approval and undo lifecycle
 
@@ -154,7 +216,8 @@ Every result is capped on a whole-character boundary with a Hebrew truncation no
 - Stale-state check: every proposal carries the `snapshot_hash` the source file had when it was read. Before writing, `approve_actions` re-reads the file; a mismatch refuses the write with `"הקובץ השתנה בשרת מאז ההצעה, הרץ שוב"`, and a failed re-read (state unknown) refuses closed with `"לא ניתן לאמת את מצב הקובץ בשרת, נסה שוב"`.
 - After a successful write, every *other* still-pending proposal on the same path is re-stamped with the fresh hash, so approving one action at a time does not make the next one look stale.
 - Undo (`undo_action`) restores the previous values for a `set_extension_params` action, or the previous file contents for `upload_text_file`. It re-checks a `post_hash` (the state right after the apply) first and refuses with `"הקובץ השתנה מאז הביצוע, לא ניתן לבטל אוטומטית"` if something else changed it since. Yemot's API has no way to delete a key or a file, so a key that did not exist before the write is restored as empty, and a file that did not exist is left in place.
-- Write state (claimed ids + undo records, one `RunWriteState` per run) is bounded to 50 runs / 1 hour, whichever is hit first, and is cleared entirely on logout so no live Yemot client outlives the session.
+- An `upload_audio_file` action is applied **without** an undo record (`undo: null`): Yemot exposes no file delete (`file_action` is denied) and the audio it replaced is not recoverable, so the proposal warns about that up front instead of offering an undo that would not work.
+- Write state (claimed ids + undo records + the change log, one `RunWriteState` per run) is bounded to 50 runs / 1 hour, whichever is hit first, and is cleared entirely on logout so no live Yemot client outlives the session.
 - No context-collapse mechanism exists — history is never rewritten, because that would invalidate the cached prompt prefix. The only lever is `CONTEXT_HARD_LIMIT` (150,000 estimated tokens): past it the run stops with `stop: "truncated"` instead of paying for an ever-growing uncached prompt.
 - `RUN_BUDGET` (600s) bounds the whole run, retries included: a computed backoff that would sleep past the remaining budget is not slept — the run fails immediately with the last error instead.
 - A repeated identical tool call (same name + canonicalized `path`) is blocked on its third occurrence (`LOOP_DETECTED`); five blocked calls in one run stop it with an `internal` error instead of letting the model spin.
