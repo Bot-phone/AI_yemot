@@ -48,7 +48,7 @@ jobs:
       - name: Run documentation scraper
         env:
           GAS_WEBAPP_URL: ${{ secrets.GAS_WEBAPP_URL != '' && secrets.GAS_WEBAPP_URL || (secrets.GAS_DEPLOYMENT_ID != '' && format('https://script.google.com/macros/s/{0}/exec', secrets.GAS_DEPLOYMENT_ID) || '') }}
-          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET != '' && secrets.ADMIN_SECRET || 'yemot_admin_secret' }}
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
         run: |
           EXTRA_ARGS=""
           if [ "${{ inputs.force }}" = "true" ]; then

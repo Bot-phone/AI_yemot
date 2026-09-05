@@ -53,6 +53,11 @@ pub fn is_weak_provider(provider: &str) -> bool {
 /// The `system` blocks for a run: rules, then the (cacheable) type catalogue.
 pub fn system_blocks(provider: &str) -> Vec<String> {
     let mut catalog = crate::knowledge::type_catalog().to_string();
+    catalog.push_str("
+
+מפתחות ext.ini המתועדים לכל סוג (לאימות שם לפני כתיבה; הערכים החוקיים נמצאים במסמכי הידע):
+");
+    catalog.push_str(crate::knowledge::param_catalog());
     if is_weak_provider(provider) {
         catalog.push_str("\n\n");
         catalog.push_str(WEAK_MODEL_ADDENDUM_HE);
