@@ -220,17 +220,26 @@ pub fn valid_task_id(id: &str) -> bool {
         && id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        && !is_windows_device_name(id)
 }
 
-/// `<app_data_dir>/tasks`, created if missing.
+/// `CON`, `NUL`, `COM1`… resolve to devices on Windows whatever the extension.
+fn is_windows_device_name(id: &str) -> bool {
+    let up = id.to_ascii_uppercase();
+    matches!(up.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ((up.starts_with("COM") || up.starts_with("LPT"))
+            && up.len() == 4
+            && up.as_bytes()[3].is_ascii_digit())
+}
+
+/// `<app_data_dir>/tasks`. Not created here: reads and the applied-ids sync
+/// must leave no trace while history is off; `save` creates it on first write.
 pub fn tasks_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let base = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("לא נמצאה תיקיית הנתונים של היישום: {}", e))?;
-    let dir = base.join("tasks");
-    fs::create_dir_all(&dir).map_err(|e| format!("לא ניתן ליצור את תיקיית ההיסטוריה: {}", e))?;
-    Ok(dir)
+    Ok(base.join("tasks"))
 }
 
 fn file_of(dir: &Path, task_id: &str) -> Result<PathBuf, String> {
@@ -369,6 +378,27 @@ pub fn prune(dir: &Path) {
 /// `prune` with explicit budgets, so the retention rule can be tested without
 /// writing 100 MiB to disk.
 fn prune_with(dir: &Path, max_tasks: usize, max_bytes: u64) {
+    // Cheap path first: while the store is under budget nothing needs to be
+    // parsed, and this runs after every save, approve and undo.
+    if let Ok(entries) = fs::read_dir(dir) {
+        let mut count = 0usize;
+        let mut bytes = 0u64;
+        let mut leftovers = false;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            match path.extension().and_then(|e| e.to_str()) {
+                Some("json") => {
+                    count += 1;
+                    bytes += entry.metadata().map(|m| m.len()).unwrap_or(0);
+                }
+                Some("tmp") => leftovers = true,
+                _ => {}
+            }
+        }
+        if count <= max_tasks && bytes <= max_bytes && !leftovers {
+            return;
+        }
+    }
     let mut rows = headers(dir);
     // newest first — everything past the budget is dropped
     rows.sort_by(|a, b| {
@@ -899,6 +929,29 @@ mod tests {
         assert_eq!(u.turns, 5);
         assert_eq!(u.tool_calls, 3);
         assert_eq!(u.cost_usd, Some(0.5));
+    }
+
+    #[test]
+    fn windows_device_names_are_not_task_ids() {
+        for bad in ["CON", "nul", "Aux", "PRN", "COM1", "lpt9"] {
+            assert!(!valid_task_id(bad), "{bad}");
+        }
+        for ok in ["CONX", "COM", "COM10", "r_18d290603e256ee8", "console"] {
+            assert!(valid_task_id(ok), "{ok}");
+        }
+    }
+
+    #[test]
+    fn an_under_budget_store_is_left_untouched_by_prune() {
+        let dir = TempDir::new("budget");
+        save(dir.path(), &record("r_a", 1)).unwrap();
+        // A tmp leftover is the one thing that forces the slow path.
+        prune_with(dir.path(), 1, u64::MAX);
+        assert!(dir.path().join("r_a.json").exists());
+        fs::write(dir.path().join("x.tmp"), b"junk").unwrap();
+        prune_with(dir.path(), 1, u64::MAX);
+        assert!(!dir.path().join("x.tmp").exists());
+        assert!(dir.path().join("r_a.json").exists());
     }
 
     #[test]

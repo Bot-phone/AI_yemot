@@ -166,7 +166,7 @@
             </p>
             <div class="flex items-center gap-2 flex-wrap text-slate-500">
               <span class="tabular-nums" dir="ltr">{formatLogTime(row.updated_at_ms)}</span>
-              <span>{t("history_steps", { count: row.steps ?? 0 })}</span>
+              <span>{row.steps === 1 ? t("history_one_step") : t("history_steps", { count: row.steps ?? 0 })}</span>
               <span class="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-mono">
                 <bdi dir="ltr">{row.model || row.provider || ""}</bdi>
               </span>
@@ -200,6 +200,7 @@
             </button>
             <button
               type="button"
+              disabled={runActive}
               onclick={() => onDelete(row.task_id)}
               aria-label={t("history_delete")}
               class="px-2 py-0.5 rounded-md border border-slate-300 bg-white text-slate-600 text-xs font-medium hover:bg-rose-50 hover:text-rose-700 hover:border-rose-300 transition focus-visible:outline-2 focus-visible:outline-blue-600"

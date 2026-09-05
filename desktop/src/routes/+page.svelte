@@ -888,7 +888,9 @@
     if (!taskId) return;
     try {
       await invoke("delete_task_history", { taskId });
-      if (loadedTaskId === taskId) loadedTaskId = "";
+      // The loaded task's proposals have no run behind them any more; clearing
+      // only `loadedTaskId` would re-arm approve/undo on them.
+      if (loadedTaskId === taskId) resetAgentRun();
     } catch (e) {
       historyError = isMissingCommand(e)
         ? t("history_unavailable")
@@ -901,7 +903,7 @@
   async function clearTaskHistory() {
     try {
       await invoke("clear_task_history");
-      loadedTaskId = "";
+      if (loadedTaskId) resetAgentRun();
     } catch (e) {
       historyError = isMissingCommand(e)
         ? t("history_unavailable")
@@ -978,7 +980,9 @@
     // task id, and a retry after a failed continuation has to reproduce that.
     lastRunKind = "continue";
     lastRunParentId = loadedTaskId;
-    lastRunPrompt = instructions[instructions.length - 1] ?? "";
+    // Nothing to retry: the stored steps already ran. A retry button here
+    // would re-send the last instruction and grow the chain with a duplicate.
+    lastRunPrompt = "";
     // Reuse the model the task ran on only when it belongs to the provider that
     // is selected now — otherwise the continuation would hand one provider
     // another provider's model id.
@@ -2278,8 +2282,10 @@
    * text back in the refine box rather than a restarted, context-free run.
    */
   async function retryRun() {
-    if (lastRunKind === "continue" && lastRunParentId && lastRunPrompt && !refineBusy) {
-      const text = lastRunPrompt;
+    if (lastRunKind === "continue" && lastRunParentId && (refineText.trim() || lastRunPrompt) && !refineBusy) {
+      // A rejected refinement leaves its text in the box — that is what to
+      // resend, not the instruction that already ran.
+      const text = refineText.trim() || lastRunPrompt;
       const ok = await continueAgentRun(lastRunParentId, text);
       if (!ok) {
         refineText = text;
