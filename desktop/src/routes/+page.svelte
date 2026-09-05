@@ -3,49 +3,11 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { openUrl } from "@tauri-apps/plugin-opener";
-  import { marked } from "marked";
-  import DOMPurify from "dompurify";
   import { t, i18n, isRTL, setLocale, availableLocales } from "$lib/i18n.svelte.js";
-
-  marked.setOptions({
-    gfm: true,
-    breaks: true,
-  });
-
-  // Everything that reaches {@html} passes through DOMPurify first: the model's
-  // answers and the knowledge files are untrusted input as far as the webview
-  // is concerned, and the app now runs under a real CSP.
-  const SANITIZE_CONFIG = {
-    ALLOWED_TAGS: [
-      "a", "b", "blockquote", "br", "code", "del", "em", "h1", "h2", "h3", "h4",
-      "h5", "h6", "hr", "i", "img", "li", "ol", "p", "pre", "s", "span", "strong",
-      "sub", "sup", "table", "tbody", "td", "tfoot", "th", "thead", "tr", "ul",
-      "bdi", "bdo", "div", "input"
-    ],
-    ALLOWED_ATTR: [
-      "href", "title", "target", "rel", "name", "id", "dir", "align", "colspan",
-      "rowspan", "src", "alt", "class", "type", "checked", "disabled", "start"
-    ],
-    ALLOW_DATA_ATTR: false
-  };
-
-  /**
-   * @param {string} html
-   * @returns {string}
-   */
-  function sanitizeHtml(html) {
-    return DOMPurify.sanitize(html, SANITIZE_CONFIG);
-  }
-
-  // Markdown links open in the system browser (handleContentClick / openUrl),
-  // but a stray target="_blank" must never carry an opener reference.
-  if (typeof window !== "undefined") {
-    DOMPurify.addHook("afterSanitizeAttributes", (node) => {
-      if (node instanceof Element && node.tagName === "A" && node.hasAttribute("target")) {
-        node.setAttribute("rel", "noopener noreferrer");
-      }
-    });
-  }
+  import AgentTimeline from "$lib/components/AgentTimeline.svelte";
+  import ActionApprovalList from "$lib/components/ActionApprovalList.svelte";
+  import LoginModal from "$lib/components/LoginModal.svelte";
+  import KnowledgeModal from "$lib/components/KnowledgeModal.svelte";
 
   // Interface direction (reactive to language changes)
   let rtl = $derived(isRTL());
@@ -183,31 +145,6 @@
   /** @type {HTMLElement | null} */
   let contentContainerRef = $state(null);
 
-  /**
-   * @param {string | null} content
-   * @returns {string}
-   */
-  function preprocessMarkdown(content) {
-    if (!content) return "";
-    return content.replace(/\[([^\]]+)\]\(([^)\n]+)\)/g, (match, text, href) => {
-      const trimmed = href.trim();
-      if (trimmed.includes(" ") && !trimmed.startsWith("<") && !trimmed.endsWith(">")) {
-        return `[${text}](<${trimmed}>)`;
-      }
-      return match;
-    });
-  }
-
-  let renderedMarkdownHtml = $derived.by(() => {
-    if (!selectedFileContent) return "";
-    try {
-      const preprocessed = preprocessMarkdown(selectedFileContent);
-      return sanitizeHtml(/** @type {string} */ (marked.parse(preprocessed)));
-    } catch (e) {
-      console.error("Markdown parse error:", e);
-      return escapeHtml(selectedFileContent);
-    }
-  });
 
   // GitHub Update info
   /** @type {any} */
@@ -495,133 +432,6 @@
   // ============================================================
   //  Agent run (direct mode) — see docs/agent-contract.md
   // ============================================================
-
-  /**
-   * @param {any} value
-   * @returns {string}
-   */
-  function escapeHtml(value) {
-    return String(value ?? "")
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;");
-  }
-
-  // Technical tokens (ivr2 paths, /1/2 paths, file names, key=value) must stay LTR
-  // even inside a right-to-left sentence — wrap each one in <bdi dir="ltr">.
-  const TECHNICAL_TOKEN_RE =
-    /(ivr2:\/[^\s,;]*|\/\d+(?:\/\d+)*|[A-Za-z0-9_.-]+\.(?:wav|txt|ini|mp3|json)|[A-Za-z_][A-Za-z0-9_]{1,}=[^\s,;]+)/g;
-
-  /**
-   * Escape a technical string and isolate its LTR tokens for RTL layouts.
-   * @param {any} text
-   * @returns {string}
-   */
-  function ltrify(text) {
-    return escapeHtml(text).replace(
-      TECHNICAL_TOKEN_RE,
-      (m) => `<bdi dir="ltr">${m}</bdi>`
-    );
-  }
-
-  /**
-   * Post-process sanitized markdown: isolate technical tokens inside text nodes
-   * so `ivr2:/3/1` keeps reading left-to-right inside a Hebrew sentence, and add
-   * a copy button to every code block.
-   * @param {string} html
-   * @returns {string}
-   */
-  function enhanceAgentHtml(html) {
-    if (typeof DOMParser === "undefined") return html;
-    const doc = new DOMParser().parseFromString(`<div>${html}</div>`, "text/html");
-    const root = doc.body.firstElementChild;
-    if (!root) return html;
-
-    // 1. bidi isolation of technical tokens in plain text (code/pre already
-    //    carry `unicode-bidi: isolate` from the stylesheet).
-    const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    /** @type {Text[]} */
-    const textNodes = [];
-    while (walker.nextNode()) {
-      textNodes.push(/** @type {Text} */ (walker.currentNode));
-    }
-    for (const node of textNodes) {
-      const parent = node.parentElement;
-      if (!parent || parent.closest("code, pre, bdi")) continue;
-      const text = node.nodeValue ?? "";
-      const matches = [...text.matchAll(TECHNICAL_TOKEN_RE)];
-      if (matches.length === 0) continue;
-      const frag = doc.createDocumentFragment();
-      let cursor = 0;
-      for (const m of matches) {
-        const start = m.index ?? 0;
-        if (start > cursor) frag.append(text.slice(cursor, start));
-        const bdi = doc.createElement("bdi");
-        bdi.setAttribute("dir", "ltr");
-        bdi.textContent = m[0];
-        frag.append(bdi);
-        cursor = start + m[0].length;
-      }
-      if (cursor < text.length) frag.append(text.slice(cursor));
-      node.replaceWith(frag);
-    }
-
-    // 2. copy button per code block (the markup is ours, added after sanitizing).
-    for (const pre of Array.from(root.querySelectorAll("pre"))) {
-      const wrap = doc.createElement("div");
-      wrap.className = "md-pre-wrap";
-      pre.replaceWith(wrap);
-      wrap.append(pre);
-      const btn = doc.createElement("button");
-      btn.setAttribute("type", "button");
-      btn.setAttribute("data-copy-pre", "");
-      btn.className = "md-copy-btn";
-      btn.textContent = t("copy_code");
-      wrap.append(btn);
-    }
-
-    return root.innerHTML;
-  }
-
-  /**
-   * Render an assistant text block through the existing markdown pipeline.
-   * @param {string} text
-   * @returns {string}
-   */
-  function renderAgentMarkdown(text) {
-    if (!text) return "";
-    try {
-      const html = sanitizeHtml(
-        /** @type {string} */ (marked.parse(preprocessMarkdown(text)))
-      );
-      return enhanceAgentHtml(html);
-    } catch (e) {
-      console.error("Markdown parse error:", e);
-      return escapeHtml(text);
-    }
-  }
-
-  /**
-   * Copy-button delegation for the code blocks injected by `enhanceAgentHtml`.
-   * @param {MouseEvent} e
-   */
-  async function handleAgentMdClick(e) {
-    const target = /** @type {HTMLElement} */ (e.target);
-    const btn = target.closest("[data-copy-pre]");
-    if (!btn) return;
-    const pre = btn.parentElement?.querySelector("pre");
-    if (!pre) return;
-    try {
-      await navigator.clipboard.writeText(pre.textContent ?? "");
-      btn.textContent = t("copied");
-      setTimeout(() => {
-        btn.textContent = t("copy_code");
-      }, 1600);
-    } catch (err) {
-      console.error("Failed to copy:", err);
-    }
-  }
 
   /** Copy the raw final answer shown under the run panel. */
   let resultCopied = $state(false);
@@ -1508,6 +1318,7 @@
       }
       if (searchQuery && !targetFile.includes(searchQuery)) {
         searchQuery = "";
+        knowledgeMatches = knowledgeFiles;
       }
       await openKnowledgeFile(targetFile, targetAnchor);
     }
@@ -1643,6 +1454,17 @@
   function closeLoginModal() {
     showLoginModal = false;
     restoreOpenerFocus();
+  }
+
+  /**
+   * The MFA method picker changed: adopt its first send type and drop any code
+   * that was already sent for the previous method.
+   * @param {string} id
+   */
+  function handleLoginMethodChange(id) {
+    const m = loginMethods.find((mm) => mm.id === id);
+    loginSendType = m && m.send_types && m.send_types[0] ? m.send_types[0] : "";
+    loginCodeSent = false;
   }
 
   /** Step back from the MFA step to the credentials form. */
@@ -2248,396 +2070,48 @@
 
         <!-- Agent Progress Panel (direct mode) -->
         {#if agentTimeline.length > 0 || agentRunning || agentFinish || agentError}
-          <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-3">
-            <div class="flex items-center justify-between border-b pb-3">
-              <div class="flex items-center gap-2">
-                <h3 class="text-sm font-bold text-slate-800">{t("agent_panel_title")}</h3>
-                {#if agentMaxTurns > 0}
-                  <span class="text-xs bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full font-semibold">
-                    {t("agent_turn_header", { turn: agentTurn, max: agentMaxTurns })}
-                  </span>
-                {/if}
-                {#if agentRunning || runElapsedMs > 0}
-                  <span class="text-xs text-slate-500 font-medium tabular-nums" dir="ltr">
-                    ⏱ {t("agent_elapsed", { secs: runElapsedLabel })}
-                  </span>
-                {/if}
-              </div>
-              {#if agentRunning}
-                <button
-                  type="button"
-                  onclick={cancelAgentRun}
-                  disabled={agentCancelling}
-                  class="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-xs font-bold rounded-lg transition disabled:opacity-50"
-                >
-                  {agentCancelling ? t("agent_cancelling") : `⏹ ${t("agent_cancel")}`}
-                </button>
-              {/if}
-            </div>
-
-            <!-- svelte-ignore a11y_click_events_have_key_events -->
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div
-              bind:this={timelineRef}
-              onscroll={handleTimelineScroll}
-              onclick={handleAgentMdClick}
-              class="space-y-2 max-h-[28rem] overflow-y-auto"
-            >
-              {#each agentTimeline as item, idx (idx)}
-                {#if item.type === "turn"}
-                  <div class="flex items-center gap-2 pt-2">
-                    <span class="text-xs font-bold text-slate-500">
-                      {t("agent_turn_header", { turn: item.turn, max: item.max })}
-                    </span>
-                    <span class="flex-1 h-px bg-slate-200"></span>
-                  </div>
-                {:else if item.type === "text"}
-                  {#if item.streaming}
-                    <!-- While streaming the text is not valid markdown yet: show it
-                         as escaped plain text and only render it once finalized. -->
-                    <div class="text-xs text-slate-700 bg-slate-50 border border-slate-100 rounded-xl p-3 leading-relaxed whitespace-pre-wrap">{item.text}</div>
-                  {:else}
-                    <div class="agent-md text-xs text-slate-700 bg-slate-50 border border-slate-100 rounded-xl p-3 leading-relaxed">
-                      {@html renderAgentMarkdown(item.text)}
-                    </div>
-                  {/if}
-                {:else if item.type === "retry"}
-                  <div class="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                    🔁 {t("agent_retry_notice", { attempt: item.attempt, max: item.max })}
-                  </div>
-                {:else if item.type === "tool"}
-                  <div class="flex items-start gap-2 text-xs px-2 py-1.5 rounded-lg hover:bg-slate-50">
-                    <span class="mt-0.5 {item.status === 'running' ? 'animate-spin' : ''}">
-                      {item.status === "ok" ? "✓" : item.status === "failed" ? "✗" : "⏳"}
-                    </span>
-                    <div class="flex-1 min-w-0">
-                      <div class="font-medium {item.status === 'failed' ? 'text-rose-700' : 'text-slate-800'}">
-                        {@html ltrify(item.label)}
-                      </div>
-                      {#if item.summary}
-                        <div class="text-xs text-slate-500 mt-0.5 break-words">{@html ltrify(item.summary)}</div>
-                      {:else if item.status === "running"}
-                        <div class="text-xs text-slate-500 mt-0.5">{t("agent_tool_running")}</div>
-                      {/if}
-                    </div>
-                    {#if item.ms !== null && item.ms !== undefined}
-                      <span class="text-xs text-slate-500 shrink-0" dir="ltr">{t("agent_ms", { ms: item.ms })}</span>
-                    {/if}
-                  </div>
-                {/if}
-              {/each}
-
-              <!-- Waiting for the first assistant text of a turn -->
-              {#if awaitingTurnText}
-                <div class="space-y-2 px-1 py-2" aria-hidden="true">
-                  <div class="h-2.5 rounded-full bg-slate-200 animate-pulse w-3/4"></div>
-                  <div class="h-2.5 rounded-full bg-slate-200 animate-pulse w-1/2"></div>
-                </div>
-              {/if}
-
-              {#if agentRunning && agentTimeline.length === 0}
-                <div class="flex items-center gap-2 text-xs text-slate-500 py-3">
-                  <span class="animate-spin">⏳</span>
-                  <span>{t("agent_thinking")}</span>
-                </div>
-              {/if}
-            </div>
-
-            {#if agentRetryNotice}
-              <div class="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                🔁 {t("agent_retry_notice", { attempt: agentRetryNotice.attempt, max: agentRetryNotice.max })}
-              </div>
-            {/if}
-
-            {#if agentError}
-              <div class="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl p-3 space-y-2">
-                <div class="font-bold">⚠️ {t("agent_error_title")}</div>
-                <div class="text-xs">
-                  {agentError.code === "session_expired" ? t("agent_session_expired") : agentError.message}
-                </div>
-                {#if lastRunPrompt && !isLoading}
-                  <button
-                    type="button"
-                    onclick={retryRun}
-                    class="px-2.5 py-1 rounded-lg bg-white border border-rose-300 text-rose-700 text-xs font-bold hover:bg-rose-100 transition"
-                  >
-                    🔁 {t("retry_run")}
-                  </button>
-                {/if}
-              </div>
-            {/if}
-
-            {#if agentFinish}
-              <div class="border-t pt-3 space-y-1">
-                <div class="text-xs font-bold {agentFinish.ok ? 'text-emerald-700' : 'text-slate-700'}">
-                  {agentFinish.ok ? "✅" : "⚠️"} {agentStopLabel(agentFinish.stop)}
-                </div>
-                {#if agentFinishLine}
-                  <div class="text-xs text-slate-500 font-medium">
-                    <bdi>{agentFinishLine}</bdi>
-                  </div>
-                {/if}
-              </div>
-            {/if}
-          </div>
+          <AgentTimeline
+            timeline={agentTimeline}
+            turn={agentTurn}
+            maxTurns={agentMaxTurns}
+            running={agentRunning}
+            cancelling={agentCancelling}
+            retryNotice={agentRetryNotice}
+            error={agentError}
+            finish={agentFinish}
+            finishLine={agentFinishLine}
+            elapsedLabel={runElapsedLabel}
+            elapsedMs={runElapsedMs}
+            awaitingText={awaitingTurnText}
+            canRetry={!!lastRunPrompt}
+            busy={isLoading}
+            stopLabel={agentStopLabel}
+            onCancel={cancelAgentRun}
+            onRetry={retryRun}
+            onTimelineElement={(/** @type {HTMLElement | null} */ el) => (timelineRef = el)}
+            onTimelineScroll={handleTimelineScroll}
+          />
         {/if}
 
         <!-- Agent Approval List (ProposedAction rows with diff) -->
         {#if proposedActions.length > 0}
-          <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
-            <div class="flex items-start justify-between border-b pb-3 gap-3 flex-wrap">
-              <div>
-                <h3 class="text-sm font-bold text-slate-800">{t("agent_actions_title")}</h3>
-                <p class="text-xs text-slate-500">{t("agent_actions_hint")}</p>
-              </div>
-              <div class="flex items-center gap-2 flex-wrap">
-                <button
-                  type="button"
-                  onclick={selectAllActions}
-                  class="px-2.5 py-1 rounded-lg border border-slate-300 text-xs font-medium text-slate-700 hover:bg-slate-100 transition"
-                >
-                  {t("select_all")}
-                </button>
-                <button
-                  type="button"
-                  onclick={clearAllActions}
-                  class="px-2.5 py-1 rounded-lg border border-slate-300 text-xs font-medium text-slate-700 hover:bg-slate-100 transition"
-                >
-                  {t("clear_all")}
-                </button>
-                <button
-                  type="button"
-                  onclick={approveSelectedActions}
-                  disabled={isLoading || selectedActionCount === 0}
-                  class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow transition disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-                >
-                  {t("approve_selected_count", { count: selectedActionCount })}
-                </button>
-              </div>
-            </div>
-
-            {#if approvalNotice}
-              <div class="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                {approvalNotice}
-              </div>
-            {/if}
-
-            {#if confirmRisky}
-              <div class="text-xs bg-amber-50 border border-amber-300 rounded-xl p-3 space-y-2">
-                <div class="font-bold text-amber-900">⚠️ {t("confirm_risky_title")}</div>
-                <p class="text-amber-900 leading-relaxed">
-                  {t("confirm_risky_line", {
-                    settings: riskSummary.settings,
-                    paths: riskSummary.paths,
-                    overwrites: riskSummary.overwrites
-                  })}
-                </p>
-                <div class="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onclick={approveSelectedActions}
-                    disabled={isLoading}
-                    class="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-lg transition disabled:opacity-50"
-                  >
-                    {t("confirm_risky_approve")}
-                  </button>
-                  <button
-                    type="button"
-                    onclick={() => (confirmRisky = false)}
-                    class="px-3 py-1.5 border border-slate-300 text-slate-700 text-xs font-medium rounded-lg hover:bg-white transition"
-                  >
-                    {t("cancel")}
-                  </button>
-                </div>
-              </div>
-            {/if}
-
-            <div class="divide-y divide-slate-100 max-h-[30rem] overflow-y-auto">
-              {#each proposedActions as action (action.id)}
-                {@const applied = isActionApplied(action)}
-                <div class="py-3 space-y-2 {applied ? 'opacity-70 bg-emerald-50/40 rounded-lg px-2' : ''}">
-                  <div class="flex items-start gap-3">
-                    <input
-                      type="checkbox"
-                      bind:checked={action.selected}
-                      disabled={applied}
-                      aria-label={action.path}
-                      class="mt-1 rounded text-blue-600 focus:ring-blue-500 disabled:opacity-50"
-                    />
-                    <div class="flex-1 min-w-0 text-xs space-y-1.5">
-                      <div class="flex items-center gap-2 flex-wrap">
-                        <span class="bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded font-mono font-bold">
-                          <bdi dir="ltr">{action.path}</bdi>
-                        </span>
-                        <span class="text-xs text-slate-500">
-                          {action.kind === "upload_text_file" ? t("kind_upload_file") : t("kind_set_params")}
-                        </span>
-                        {#if applied}
-                          <span class="text-xs bg-emerald-100 text-emerald-800 border border-emerald-300 px-1.5 py-0.5 rounded-full font-semibold">
-                            ✓ {t("action_already_applied")}
-                          </span>
-                        {/if}
-                        {#if !action.exists}
-                          <span class="text-xs bg-sky-50 text-sky-700 border border-sky-200 px-1.5 py-0.5 rounded-full font-semibold">
-                            ✨ {t("will_be_created")}
-                          </span>
-                        {/if}
-                        <span
-                          class="text-xs px-1.5 py-0.5 rounded-full font-semibold border
-                            {action.risk === 'destructive'
-                              ? 'bg-rose-50 text-rose-700 border-rose-200'
-                              : action.risk === 'overwrite'
-                                ? 'bg-amber-50 text-amber-800 border-amber-200'
-                                : 'bg-emerald-50 text-emerald-700 border-emerald-200'}"
-                        >
-                          {action.risk === "destructive"
-                            ? t("risk_destructive")
-                            : action.risk === "overwrite"
-                              ? t("risk_overwrite")
-                              : t("risk_low")}
-                        </span>
-                      </div>
-
-                      {#if action.reason}
-                        <p class="text-slate-600 leading-relaxed">{action.reason}</p>
-                      {/if}
-
-                      {#if action.warnings.length > 0}
-                        <div class="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
-                          <span class="font-bold">{t("warnings_title")}:</span>
-                          <ul class="list-disc {rtl ? 'mr-4' : 'ml-4'} mt-0.5 space-y-0.5">
-                            {#each action.warnings as w}
-                              <li>{@html ltrify(w)}</li>
-                            {/each}
-                          </ul>
-                        </div>
-                      {/if}
-
-                      <button
-                        type="button"
-                        onclick={() => (action.expanded = !action.expanded)}
-                        class="text-xs text-blue-600 hover:underline"
-                      >
-                        {action.expanded ? `▲ ${t("hide_diff")}` : `▼ ${t("show_diff")}`}
-                      </button>
-
-                      {#if action.expanded}
-                        {#if action.previous}
-                          <div class="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
-                            <span class="font-bold">{t("undo_previous")}:</span>
-                            <span class="font-mono break-all"><bdi dir="ltr">{action.previous}</bdi></span>
-                          </div>
-                        {/if}
-                        {#if action.diff.length === 0}
-                          <p class="text-xs text-slate-500">{t("no_diff")}</p>
-                        {:else}
-                          <div class="overflow-x-auto border border-slate-200 rounded-lg">
-                            <table class="w-full text-xs">
-                              <thead class="bg-slate-50 text-slate-500">
-                                <tr>
-                                  <th class="p-1.5 {rtl ? 'text-right' : 'text-left'} font-semibold">{t("diff_key")}</th>
-                                  <th class="p-1.5 {rtl ? 'text-right' : 'text-left'} font-semibold">{t("diff_before")}</th>
-                                  <th class="p-1.5 {rtl ? 'text-right' : 'text-left'} font-semibold">{t("diff_after")}</th>
-                                </tr>
-                              </thead>
-                              <tbody class="divide-y divide-slate-100">
-                                {#each action.diff as d}
-                                  <tr
-                                    class={d.kind === "new"
-                                      ? "bg-sky-50/60"
-                                      : d.kind === "changed"
-                                        ? "bg-amber-50/60"
-                                        : ""}
-                                  >
-                                    <td class="p-1.5 font-mono font-bold text-slate-700">
-                                      <bdi dir="ltr">{d.key}</bdi>
-                                    </td>
-                                    <td class="p-1.5 font-mono text-slate-500">
-                                      {#if d.before}
-                                        <bdi dir="ltr">{d.before}</bdi>
-                                      {:else}
-                                        <span class="text-slate-300">{t("diff_empty")}</span>
-                                      {/if}
-                                    </td>
-                                    <td
-                                      class="p-1.5 font-mono font-semibold
-                                        {d.kind === 'new'
-                                          ? 'text-sky-700'
-                                          : d.kind === 'changed'
-                                            ? 'text-amber-800'
-                                            : 'text-slate-500'}"
-                                    >
-                                      {#if d.after}
-                                        <bdi dir="ltr">{d.after}</bdi>
-                                      {:else}
-                                        <span class="text-slate-300">{t("diff_empty")}</span>
-                                      {/if}
-                                    </td>
-                                  </tr>
-                                {/each}
-                              </tbody>
-                            </table>
-                          </div>
-                        {/if}
-                      {/if}
-
-                      {#if actionResults[action.id]}
-                        {@const res = actionResults[action.id]}
-                        <div
-                          class="text-xs rounded-lg px-2.5 py-1.5 border
-                            {res.ok
-                              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                              : 'bg-rose-50 border-rose-200 text-rose-800'}"
-                        >
-                          <div class="font-bold">
-                            {res.ok ? `✓ ${t("action_ok")}` : `✗ ${t("action_failed")}`}
-                            {#if res.message}<span class="font-normal"> — {res.message}</span>{/if}
-                          </div>
-                          {#if res.params && res.params.length > 0}
-                            <ul class="mt-1 space-y-0.5">
-                              {#each res.params as p}
-                                <li class="flex items-center gap-1.5 flex-wrap">
-                                  <span>{p.applied ? "✓" : "✗"}</span>
-                                  <span class="font-mono"><bdi dir="ltr">{p.key}={p.value}</bdi></span>
-                                  <span class="text-slate-600">
-                                    {p.applied ? t("param_applied") : t("param_not_applied")}
-                                  </span>
-                                  {#if p.note}<span class="text-slate-600">— {p.note}</span>{/if}
-                                </li>
-                              {/each}
-                            </ul>
-                          {/if}
-                          {#if res.undo}
-                            <div class="mt-1 text-slate-700">
-                              <span class="font-bold">{t("undo_previous")}:</span>
-                              <span class="font-mono break-all"><bdi dir="ltr">{res.undo}</bdi></span>
-                            </div>
-                          {/if}
-                          {#if res.ok}
-                            <div class="mt-1.5 flex items-center gap-2 flex-wrap">
-                              {#if undoState[action.id] === "done"}
-                                <span class="font-semibold text-slate-700">↩ {t("undo_done")}</span>
-                              {:else if undoState[action.id] === "unavailable"}
-                                <span class="text-slate-600">{t("undo_unavailable")}</span>
-                              {:else}
-                                <button
-                                  type="button"
-                                  onclick={() => undoAction(action.id)}
-                                  class="px-2 py-0.5 rounded-md border border-slate-300 bg-white text-slate-700 text-xs font-medium hover:bg-slate-100 transition"
-                                >
-                                  ↩ {t("undo_action")}
-                                </button>
-                              {/if}
-                            </div>
-                          {/if}
-                        </div>
-                      {/if}
-                    </div>
-                  </div>
-                </div>
-              {/each}
-            </div>
-          </div>
+          <ActionApprovalList
+            actions={proposedActions}
+            results={actionResults}
+            {undoState}
+            selectedCount={selectedActionCount}
+            {riskSummary}
+            {confirmRisky}
+            notice={approvalNotice}
+            busy={isLoading}
+            {rtl}
+            isApplied={isActionApplied}
+            onSelectAll={selectAllActions}
+            onClearAll={clearAllActions}
+            onApprove={approveSelectedActions}
+            onCancelConfirm={() => (confirmRisky = false)}
+            onUndo={undoAction}
+          />
         {/if}
 
         <!-- Action Preview List Card (If parsed actions exist) -->
@@ -2764,272 +2238,46 @@
 
   <!-- Knowledge Explorer Modal -->
   {#if showKnowledgeModal}
-    <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-      <div
-        class="bg-white rounded-2xl max-w-4xl w-full max-h-[85vh] flex flex-col shadow-2xl overflow-hidden"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="knowledge-modal-title"
-      >
-        <div class="p-4 border-b flex items-center justify-between bg-slate-50">
-          <div class="flex items-center gap-2">
-            <span class="text-xl" aria-hidden="true">📚</span>
-            <h3 id="knowledge-modal-title" class="font-bold text-sm text-slate-800">{t("knowledge_modal_title", { count: knowledgeFiles.length })}</h3>
-          </div>
-          <button
-            type="button"
-            onclick={closeKnowledgeModal}
-            aria-label={t("close")}
-            title={t("close")}
-            class="text-slate-500 hover:text-slate-800 text-lg font-bold"
-          >
-            ✕
-          </button>
-        </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-3 flex-1 overflow-hidden">
-          <!-- File List -->
-          <div class="p-3 {rtl ? 'border-l' : 'border-r'} border-slate-200 overflow-y-auto max-h-[70vh]">
-            <!-- svelte-ignore a11y_autofocus -->
-            <input
-              type="text"
-              autofocus
-              bind:value={searchQuery}
-              oninput={scheduleKnowledgeSearch}
-              aria-label={t("search_knowledge")}
-              placeholder={t("search_knowledge")}
-              class="w-full text-xs rounded-lg border border-slate-300 p-2 mb-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-            />
-            <div class="space-y-1">
-              {#each knowledgeMatches as file}
-                <button
-                  type="button"
-                  onclick={() => openKnowledgeFile(file.name)}
-                  class="w-full {rtl ? 'text-right' : 'text-left'} p-2 text-xs rounded-lg hover:bg-blue-50 hover:text-blue-700 transition flex items-center justify-between {selectedFileName === file.name ? 'bg-blue-100 font-bold text-blue-800' : 'text-slate-700'}"
-                >
-                  <span class="truncate">{file.name.replace('.txt', '')}</span>
-                  <span class="text-xs text-slate-500">{(file.size / 1024).toFixed(1)}k</span>
-                </button>
-              {/each}
-            </div>
-          </div>
-
-          <!-- Content Viewer -->
-          <div class="md:col-span-2 flex flex-col overflow-hidden bg-slate-50">
-            {#if selectedFileContent}
-              <!-- Header Bar of Viewer -->
-              <div class="p-3 border-b bg-white flex items-center justify-between gap-2">
-                <div class="flex items-center gap-2 overflow-hidden">
-                  <span class="text-base">📄</span>
-                  <h4 class="text-xs font-bold text-slate-800 truncate" title={selectedFileName}>
-                    {selectedFileName.replace('.txt', '')}
-                  </h4>
-                </div>
-
-                <div class="flex items-center gap-2">
-                  <!-- View Mode Toggle -->
-                  <div class="flex bg-slate-100 p-0.5 rounded-lg text-xs">
-                    <button
-                      type="button"
-                      onclick={() => isRawView = false}
-                      class="px-2.5 py-1 rounded-md transition font-medium {!isRawView ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-600 hover:text-slate-800'}"
-                    >
-                      {t("view_formatted")}
-                    </button>
-                    <button
-                      type="button"
-                      onclick={() => isRawView = true}
-                      class="px-2.5 py-1 rounded-md transition font-medium {isRawView ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-600 hover:text-slate-800'}"
-                    >
-                      {t("view_raw")}
-                    </button>
-                  </div>
-
-                  <!-- Copy Button -->
-                  <button
-                    type="button"
-                    onclick={copySelectedContent}
-                    class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs rounded-lg transition flex items-center gap-1 font-medium"
-                    title={t("copy_file")}
-                  >
-                    {#if copyFeedback}
-                      <span class="text-emerald-600 font-bold">✓ {t("file_copied")}</span>
-                    {:else}
-                      <span>📋 {t("copy_file")}</span>
-                    {/if}
-                  </button>
-                </div>
-              </div>
-
-              <!-- Content Scrollable Body -->
-              <div
-                bind:this={contentContainerRef}
-                class="flex-1 p-5 overflow-y-auto max-h-[64vh] bg-white scroll-smooth"
-              >
-                {#if isRawView}
-                  <pre class="text-xs text-slate-700 font-sans whitespace-pre-wrap leading-relaxed">{selectedFileContent}</pre>
-                {:else}
-                  <!-- svelte-ignore a11y_click_events_have_key_events -->
-                  <!-- svelte-ignore a11y_no_static_element_interactions -->
-                  <div
-                    class="knowledge-prose text-xs leading-relaxed"
-                    onclick={handleContentClick}
-                  >
-                    {@html renderedMarkdownHtml}
-                  </div>
-                {/if}
-              </div>
-            {:else}
-              <div class="h-full flex flex-col items-center justify-center text-slate-500 text-xs p-6 gap-2">
-                <span class="text-3xl">📖</span>
-                <span>{t("select_file_hint")}</span>
-              </div>
-            {/if}
-          </div>
-        </div>
-      </div>
-    </div>
+    <KnowledgeModal
+      totalCount={knowledgeFiles.length}
+      matches={knowledgeMatches}
+      bind:searchQuery
+      content={selectedFileContent}
+      fileName={selectedFileName}
+      bind:rawView={isRawView}
+      {copyFeedback}
+      {rtl}
+      onClose={closeKnowledgeModal}
+      onSearchInput={scheduleKnowledgeSearch}
+      onOpenFile={(/** @type {string} */ name) => openKnowledgeFile(name)}
+      onCopy={copySelectedContent}
+      onContentClick={handleContentClick}
+      onContentElement={(/** @type {HTMLElement | null} */ el) => (contentContainerRef = el)}
+    />
   {/if}
 
   <!-- Login (create token) Modal -->
   {#if showLoginModal}
-    <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-      <div
-        class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="login-modal-title"
-      >
-        <div class="flex items-center justify-between border-b pb-3">
-          <h3 id="login-modal-title" class="font-bold text-sm text-slate-800 flex items-center gap-2">
-            <span aria-hidden="true">{loginStep === "credentials" ? "🔑" : "🔐"}</span>
-            <span>{loginStep === "credentials" ? t("login_title") : t("mfa_modal_title")}</span>
-          </h3>
-          <button
-            type="button"
-            onclick={closeLoginModal}
-            aria-label={t("close")}
-            title={t("close")}
-            class="text-slate-500 hover:text-slate-800"
-          >
-            ✕
-          </button>
-        </div>
-
-        {#if loginStep === "credentials"}
-          <div>
-            <label for="login-username" class="block text-xs font-semibold text-slate-600 mb-1">{t("system_number")}</label>
-            <!-- svelte-ignore a11y_autofocus -->
-            <input
-              id="login-username"
-              type="text"
-              dir="ltr"
-              autofocus
-              bind:value={loginUsername}
-              placeholder={t("system_number_placeholder")}
-              class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <div class="flex items-center justify-between mb-1">
-              <label for="login-password" class="text-xs font-semibold text-slate-600">{t("password")}</label>
-              <button
-                type="button"
-                onclick={() => loginShowPassword = !loginShowPassword}
-                class="text-xs text-blue-600 hover:underline"
-              >
-                {loginShowPassword ? t("hide") : t("show")}
-              </button>
-            </div>
-            <input
-              id="login-password"
-              type={loginShowPassword ? "text" : "password"}
-              dir="ltr"
-              bind:value={loginPassword}
-              placeholder={t("password_placeholder")}
-              class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-            />
-          </div>
-
-          <button
-            type="button"
-            onclick={handleLogin}
-            disabled={loginLoading}
-            class="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg shadow transition disabled:opacity-50"
-          >
-            {t("login_btn")}
-          </button>
-        {:else}
-          <p class="text-xs text-slate-600 leading-relaxed">{t("mfa_modal_desc")}</p>
-
-          <div>
-            <label for="login-mfa-method" class="block text-xs font-semibold text-slate-600 mb-1">{t("mfa_methods")}</label>
-            <select
-              id="login-mfa-method"
-              bind:value={loginMethodId}
-              onchange={(e) => {
-                const m = loginMethods.find((mm) => mm.id === /** @type {HTMLSelectElement} */ (e.currentTarget).value);
-                loginSendType = m && m.send_types && m.send_types[0] ? m.send_types[0] : "";
-                loginCodeSent = false;
-              }}
-              class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white"
-            >
-              {#each loginMethods as m}
-                <option value={m.id}>{m.label}</option>
-              {/each}
-            </select>
-          </div>
-
-          <button
-            type="button"
-            onclick={handleSendLoginCode}
-            disabled={loginLoading}
-            class="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-lg transition disabled:opacity-50"
-          >
-            📞 {t("send_code")}
-          </button>
-
-          {#if loginCodeSent}
-            <div class="pt-2">
-              <label for="login-mfa-code" class="block text-xs font-semibold text-slate-600 mb-1">{t("code_sent")}</label>
-              <input
-                id="login-mfa-code"
-                type="text"
-                dir="ltr"
-                bind:value={loginCode}
-                placeholder={t("mfa_code_placeholder")}
-                class="w-full text-center text-sm font-mono tracking-widest rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-              />
-            </div>
-
-            <button
-              type="button"
-              onclick={handleValidateLoginCode}
-              disabled={loginLoading}
-              class="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg shadow transition disabled:opacity-50"
-            >
-              {t("validate_code")}
-            </button>
-          {/if}
-
-          <button
-            type="button"
-            onclick={backToCredentials}
-            class="w-full py-2 border border-slate-300 text-slate-700 text-xs font-medium rounded-lg hover:bg-slate-50 transition"
-          >
-            {rtl ? "→" : "←"} {t("back")}
-          </button>
-        {/if}
-
-        {#if loginStatus}
-          <p class="text-xs text-blue-700 font-medium">{loginStatus}</p>
-        {/if}
-        {#if loginError}
-          <p class="text-xs text-rose-600 font-medium">❌ {loginError}</p>
-        {/if}
-      </div>
-    </div>
+    <LoginModal
+      step={loginStep}
+      bind:username={loginUsername}
+      bind:password={loginPassword}
+      bind:showPassword={loginShowPassword}
+      methods={loginMethods}
+      bind:methodId={loginMethodId}
+      bind:code={loginCode}
+      codeSent={loginCodeSent}
+      status={loginStatus}
+      error={loginError}
+      loading={loginLoading}
+      {rtl}
+      onClose={closeLoginModal}
+      onLogin={handleLogin}
+      onSendCode={handleSendLoginCode}
+      onValidateCode={handleValidateLoginCode}
+      onBack={backToCredentials}
+      onMethodChange={handleLoginMethodChange}
+    />
   {/if}
 </div>
 
