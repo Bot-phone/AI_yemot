@@ -2455,10 +2455,15 @@
 
   async function handleValidateLoginCode() {
     loginError = "";
-    if (!loginCode.trim()) {
+    // Yemot sends a numeric one-time code, normally 6 digits; short or
+    // non-numeric input is caught here instead of burning an attempt
+    // (the server locks after too many tries).
+    const code = loginCode.replace(/\D/g, "");
+    if (code.length < 4 || code.length > 6) {
       loginError = t("enter_mfa_code");
       return;
     }
+    loginCode = code;
     loginLoading = true;
     loginStatus = t("verifying_code");
     try {

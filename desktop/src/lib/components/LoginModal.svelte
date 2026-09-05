@@ -190,7 +190,12 @@
             type="text"
             dir="ltr"
             autofocus
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            pattern="[0-9]*"
+            maxlength="6"
             bind:value={code}
+            oninput={() => { code = code.replace(/\D/g, "").slice(0, 6); }}
             placeholder={t("mfa_code_placeholder")}
             class="w-full text-center text-sm font-mono tracking-widest rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
           />
