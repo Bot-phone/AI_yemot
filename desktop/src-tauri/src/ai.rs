@@ -82,13 +82,13 @@ async fn send_to_script(payload: AIRequestPayload) -> Result<AIResponsePayload, 
     let res = tokio::time::timeout(SCRIPT_TIMEOUT, request)
         .await
         .map_err(|_| "פסק זמן בהמתנה לתשובת הסקריפט".to_string())?
-        .map_err(|e| format!("שגיאת תקשורת מול הסקריפט: {}", e))?;
+        .map_err(|e| format!("שגיאת תקשורת מול הסקריפט: {}", e.without_url()))?;
 
     let status = res.status();
     let text = res
         .text()
         .await
-        .map_err(|e| format!("שגיאת קריאת תשובה: {}", e))?;
+        .map_err(|e| format!("שגיאת קריאת תשובה: {}", e.without_url()))?;
 
     if status.is_success() {
         Ok(AIResponsePayload {
