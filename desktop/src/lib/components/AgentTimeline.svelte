@@ -75,8 +75,13 @@
     <div class="flex items-center gap-2 flex-wrap">
       <h3 class="text-sm font-bold text-slate-800">{t("agent_panel_title")}</h3>
       {#if maxTurns > 0}
-        <span class="text-xs bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full font-semibold">
-          {t("agent_turn_header", { turn, max: maxTurns })}
+        <!-- `maxTurns` is a safety cap on model turns, not a plan length —
+             it is never shown as "of N", only explained on hover. -->
+        <span
+          class="text-xs bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full font-semibold"
+          title={t("agent_turn_cap_hint", { max: maxTurns })}
+        >
+          {running ? t("agent_turn_label", { turn }) : t("agent_turns_done", { count: turn })}
         </span>
       {/if}
       {#if running || elapsedMs > 0}
@@ -109,7 +114,7 @@
       {#if item.type === "turn"}
         <div class="flex items-center gap-2 pt-2">
           <span class="text-xs font-bold text-slate-500">
-            {t("agent_turn_header", { turn: item.turn, max: item.max })}
+            {t("agent_turn_label", { turn: item.turn })}
           </span>
           <span class="flex-1 h-px bg-slate-200"></span>
         </div>

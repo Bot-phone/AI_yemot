@@ -148,7 +148,9 @@ export const LOCALES = {
       include_tree_hint: "מוסיף תמונת מצב קצרה של השלוחות הקיימות כדי לשפר את דיוק המודל.",
 
       agent_panel_title: "מהלך העבודה",
-      agent_turn_header: "שלב {turn} מתוך {max}",
+      agent_turn_label: "סבב {turn}",
+      agent_turns_done: "{count} סבבים",
+      agent_turn_cap_hint: "מגבלת בטיחות: עד {max} סבבי מודל בריצה אחת",
       agent_starting: "מפעיל את הסוכן...",
       agent_started_with: "הסוכן פועל · {provider} · {model}",
       agent_cancel: "עצור ריצה",
@@ -486,7 +488,9 @@ export const LOCALES = {
       include_tree_hint: "Adds a short snapshot of the existing extensions to improve the model's accuracy.",
 
       agent_panel_title: "Run progress",
-      agent_turn_header: "Step {turn} of {max}",
+      agent_turn_label: "Turn {turn}",
+      agent_turns_done: "{count} turns",
+      agent_turn_cap_hint: "Safety limit: up to {max} model turns per run",
       agent_starting: "Starting the agent...",
       agent_started_with: "Agent running · {provider} · {model}",
       agent_cancel: "Stop run",
