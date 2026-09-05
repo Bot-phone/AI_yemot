@@ -1,7 +1,7 @@
 {
   "name": "desktop",
   "version": "0.1.0",
-  "description": "",
+  "description": "AI yemot — an AI-based editor for Yemot HaMashiach phone lines (desktop frontend)",
   "type": "module",
   "scripts": {
     "dev": "vite dev",

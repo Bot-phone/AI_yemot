@@ -1,8 +1,14 @@
 # Repo conventions
 
-AI assistant for updating extensions ("שלוחות") in Yemot HaMashiach phone
-systems. Read `README.md` for the layout and `desktop/README.md` for the
-desktop architecture before making changes.
+An AI-based **editor for Yemot HaMashiach phone lines** — not a chat and not an
+"assistant". The user browses the line structure (מבנה הקו), inspects an
+extension ("שלוחה"), describes a task (משימה) in Hebrew, reviews the proposed
+changes (שינויים מוצעים) as a diff, approves, and can undo from the change log
+(יומן שינויים). The model is the engine that turns a task into concrete
+`ext.ini` / file changes; user-facing text uses editor vocabulary ("משימה",
+"הצע שינויים", "בצע", "דייק את המשימה"), never chat vocabulary. Read
+`README.md` for the layout and `desktop/README.md` for the desktop architecture
+before making changes.
 
 ## Where things live
 

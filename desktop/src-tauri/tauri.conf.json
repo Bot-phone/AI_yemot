@@ -11,7 +11,7 @@
   "app": {
     "windows": [
       {
-        "title": "AI yemot — עדכון שלוחות חכם",
+        "title": "AI yemot — עורך קווי ימות המשיח",
         "width": 1050,
         "height": 800,
         "minWidth": 850,
@@ -27,7 +27,7 @@
     "publisher": "Bot-phone",
     "category": "Productivity",
     "shortDescription": "AI yemot",
-    "longDescription": "עדכון שלוחות חכם למערכות ימות המשיח",
+    "longDescription": "עורך קווי ימות המשיח מבוסס AI — משימה, שינויים מוצעים, אישור, יומן שינויים",
     "targets": ["nsis", "msi", "dmg", "appimage", "deb"],
     "icon": [
       "icons/32x32.png",

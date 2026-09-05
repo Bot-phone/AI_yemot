@@ -1,12 +1,70 @@
 # AI yemot
 
-An AI assistant that updates extensions ("שלוחות") in **Yemot HaMashiach**
-phone systems. You describe the change in Hebrew; an agent loop reads the
-system's current configuration, plans the edits against an embedded corpus of
-the official Hebrew documentation, and applies them only after you approve a
-before/after diff.
+**An AI-based editor for Yemot HaMashiach phone lines** — עורך קווי ימות המשיח
+מבוסס AI. Not a chat: a desktop workspace where you open your line, describe a
+task in Hebrew, and get concrete `ext.ini` and file changes back as a reviewable
+diff.
 
-Downloads: [latest release](https://github.com/Bot-phone/AI_yemot/releases/latest).
+### Who it is for
+
+Anyone who maintains a Yemot HaMashiach line — gabbaim, organisations, IVR
+integrators — and wants to change extension behaviour without hand-editing
+`ext.ini` keys or hunting through the forum documentation.
+
+### The workflow
+
+1. **Connect** (התחברות) — system number, password, MFA if the line requires it.
+   The Yemot token stays on your machine, in the OS credential store.
+2. **Browse the line structure** (מבנה הקו) — the live extension tree; open a
+   שלוחה to inspect its keys, its files and its raw `ext.ini`.
+3. **Describe a task** (משימה) — plain Hebrew, e.g. "בשלוחה 3 תעשה תפריט עם
+   שלוש אפשרויות". Attach audio files if the task needs recordings.
+4. **Review the proposed changes** (שינויים מוצעים) — every mutating step is a
+   proposal with a before/after diff, a risk marker and warnings. Nothing is
+   written yet.
+5. **Approve** (בצע) — pick the proposals you want; only those are written. The
+   editor re-reads the server first and refuses if the file moved since the
+   proposal was made.
+6. **Undo** (ביטול) — the change log (יומן שינויים) keeps every applied change
+   and can reverse it while the server state has not moved.
+
+Not satisfied? Refine the same task ("דייק את המשימה") instead of starting over
+— the editor continues from the same task with the status of the previous
+proposals, it does not open a new conversation.
+
+### Features
+
+- Live line structure browser and an extension inspector (keys, files, raw
+  `ext.ini`).
+- Task → proposed changes → approval → change log, with per-action undo.
+- Audio attachments: attach `wav` / `mp3` / `m4a` / `ogg` / `wma` / `aac` files
+  to a task and let the editor place them on the line.
+- The official Hebrew Yemot documentation is compiled into the binary and
+  searched locally — no forum tab, no runtime download.
+- Direct API access: the Yemot token never leaves your machine except to call
+  `call2all.co.il`.
+- A per-task cost estimate and token/cache counters.
+- Built-in update check against GitHub releases.
+
+### Installing
+
+Download the installer for your OS from the
+[latest release](https://github.com/Bot-phone/AI_yemot/releases/latest) —
+Windows (`.msi` / `.exe`), macOS (`.dmg`), Linux (`.AppImage` / `.deb`).
+
+The installers are **not code-signed**, so Windows SmartScreen shows a
+"Windows protected your PC" warning on first run: choose *More info* → *Run
+anyway*. macOS Gatekeeper needs the equivalent *Open anyway* in
+System Settings → Privacy & Security.
+
+### AI provider (BYOK)
+
+The editor ships with no AI key. You bring your own — Claude, Gemini, OpenAI,
+Groq, or any OpenAI-compatible endpoint — and the key is stored in the OS
+credential store, never in a config file and never sent anywhere but that
+provider. The cost line shown after each task is an **estimate** computed from
+public list prices as of a fixed date; free tiers, promotions and provider price
+changes are not visible to the app, and an unknown model shows no cost at all.
 
 ## Repository layout
 
