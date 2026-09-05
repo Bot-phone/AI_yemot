@@ -4,6 +4,30 @@ Source of truth for the Tauri commands and events used by the agentic run in the
 All new struct fields are `snake_case` (serde default). Tauri command **argument** names are camelCase at the
 `invoke` call site (Tauri converts them), e.g. `invoke("approve_actions", { runId, actionIds })`.
 
+## Product model
+
+The app is an **editor for phone lines**, not a chat. One run = one **task** (משימה): the user describes what
+should change, the loop reads the line, and every mutating step comes back as a **proposed change**
+(שינוי מוצע) with a before/after diff — never a silent write. The user **approves** the proposals they want
+(`approve_actions`), and applied changes land in the **change log** (יומן שינויים), each undoable while the
+server state has not moved.
+
+Refining a task (`continue_agent_run`) is a **refinement of the same task**, not a conversational turn: it
+resumes the parent transcript and prepends the status of the parent's proposals (בוצע / בוטל / לא אושר).
+Nothing here carries free-form conversation state; when a task cannot be refined (parent evicted, unfinished,
+or past `CONTEXT_HARD_LIMIT`) the answer is a new task, not a longer thread.
+
+User-facing strings follow this model — "משימה", "שינויים מוצעים", "יומן שינויים", "מבנה הקו" — and avoid
+chat vocabulary ("צ'אט", "שיחה", "הודעה", "עוזר").
+
+## Cost line
+
+The cost shown after a task is an **estimate**, not a bill. It comes from the public list-price table in
+`agent/pricing.rs`, frozen at `PRICE_LIST_DATE`, which `agent:finished` reports as `usage.price_list_date`
+exactly when it reports a `cost_usd`. Free tiers, promotional rates and provider price changes are invisible
+to the app, and a model absent from the table yields `cost_usd: null` (and no `price_list_date`) — the UI then
+omits the cost from the line rather than showing a guess.
+
 ## Modes
 
 - `target_mode = "script"` keeps using the legacy `send_ai_request` command (GAS). It POSTs a JSON body (prompt, optional model/key) to the script URL — never a query string, so the prompt and any personal API key never sit in a proxy or access log. The Yemot token is never part of this payload.
