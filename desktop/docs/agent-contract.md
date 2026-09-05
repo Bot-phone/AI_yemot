@@ -129,7 +129,7 @@ Provided by `yemot.rs` (see that module). Used only by legacy script mode to app
 
 ### `get_extension_tree(token, root, depth) -> Result<ExtTreeNode[], String>`
 
-Read-only. Lists the extensions under `root` (`""` / `"/"` = the whole line) with `YemotClient::list_extensions` and nests the flat result by path. `depth` is clamped to 1..=4. A node whose direct parent is missing from the listing is attached to its nearest present ancestor, or to the top level when it has none.
+Read-only. Lists the extensions under `root` (`""` / `"/"` = the whole line) with `YemotClient::list_extensions` and nests the flat result by path. `depth` is clamped to 1..=2 — the full range `list_extensions` implements (`1` = the children of `root`, `2` = one level below them); a larger value never produced a deeper tree. A node whose direct parent is missing from the listing is attached to its nearest present ancestor, or to the top level when it has none.
 
 ```jsonc
 // ExtTreeNode

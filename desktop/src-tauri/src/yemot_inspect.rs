@@ -233,7 +233,9 @@ fn require_client(token: &str) -> Result<YemotClient, String> {
 // ---------------------------------------------------------------------------
 
 /// The extension tree under `root` (`""` / `"/"` = the whole line), nested.
-/// `depth` is clamped to 1..=4.
+/// `depth` is clamped to 1..=2, which is everything `list_extensions` can
+/// deliver: it fetches the children of `root` and, at `depth >= 2`, one further
+/// level. A 3 or a 4 promised a depth the client never expanded.
 #[tauri::command]
 pub async fn get_extension_tree(
     token: String,
@@ -243,7 +245,7 @@ pub async fn get_extension_tree(
     let client = require_client(&token)?;
     let root = canon_ext(&root).map_err(|e| render_error(&e))?;
     let nodes = client
-        .list_extensions(&root, depth.clamp(1, 4))
+        .list_extensions(&root, depth.clamp(1, 2))
         .await
         .map_err(|e| render_error(&e))?;
     Ok(build_tree(&nodes))
