@@ -51,6 +51,7 @@
     // --- run behaviour ---------------------------------------------------
     autoApply = $bindable(false),
     includeTree = $bindable(true),
+    saveHistory = $bindable(true),
     /** @type {() => void} */
     onSaveAgentToggles,
     logoutOnFinish = $bindable(false),
@@ -320,6 +321,19 @@
               <span class="font-medium">{t("include_tree_label")}</span>
             </label>
             <p class="text-xs text-slate-500 mt-1 leading-relaxed">{t("include_tree_hint")}</p>
+          </div>
+
+          <div>
+            <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+              <input
+                type="checkbox"
+                bind:checked={saveHistory}
+                onchange={onSaveAgentToggles}
+                class="rounded text-blue-600 focus:ring-blue-500"
+              />
+              <span class="font-medium">{t("save_history_label")}</span>
+            </label>
+            <p class="text-xs text-slate-500 mt-1 leading-relaxed">{t("save_history_hint")}</p>
           </div>
         </div>
       {/if}
