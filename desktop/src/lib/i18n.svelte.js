@@ -194,7 +194,8 @@ export const LOCALES = {
         "החיבור לימות המשיח פג. יש להתחבר מחדש (אימות דו-שלבי) ולהריץ את הבקשה מחדש.",
 
       proposed_changes_title: "שינויים מוצעים",
-      proposed_changes_hint: "סמן את השינויים לאישור. הטבלה מציגה את הערך הנוכחי מול הערך החדש.",
+      proposed_changes_hint: "סמן את השינויים לאישור. הטבלה מציגה את הערך הנוכחי מול הערך החדש. השינויים נכתבים לקו חי, בדוק אותם לפני האישור.",
+      disclaimer: "התוכנה כותבת לקו טלפוני חי ומסופקת כמות שהיא, ללא אחריות וללא חבות לנזקים. בדוק כל שינוי לפני אישורו.",
       applying_actions: "מבצע את הפעולות שנבחרו...",
       will_be_created: "תיווצר",
       risk_low: "סיכון נמוך",
@@ -546,7 +547,8 @@ export const LOCALES = {
         "The Yemot HaMashiach session expired. Please sign in again (two-factor) and re-run the request.",
 
       proposed_changes_title: "Proposed changes",
-      proposed_changes_hint: "Mark the changes to approve. The table shows the current value against the new one.",
+      proposed_changes_hint: "Mark the changes to approve. The table shows the current value against the new one. Changes are written to a live line; review them before approving.",
+      disclaimer: "This software writes to a live phone line and is provided as is, without warranty or liability for damage. Review every change before approving it.",
       applying_actions: "Running the selected actions...",
       will_be_created: "will be created",
       risk_low: "Low risk",

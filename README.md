@@ -66,6 +66,15 @@ provider. The cost line shown after each task is an **estimate** computed from
 public list prices as of a fixed date; free tiers, promotions and provider price
 changes are not visible to the app, and an unknown model shows no cost at all.
 
+## Use with care
+
+This editor **writes to a live phone system**. A wrong change can silence a
+line, misroute callers or overwrite recordings. Review every proposed change
+before approving it, keep automatic apply off unless you know exactly what a
+task will do, and use the change log to undo promptly. The software is provided
+as is, **without any warranty and without liability for damage**, including
+changes made to a phone system; see [`LICENSE`](LICENSE).
+
 ## Repository layout
 
 | Path | What it is |

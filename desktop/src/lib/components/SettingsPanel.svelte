@@ -472,6 +472,7 @@
         <span>{t("logout_on_finish")}</span>
       </label>
 
+      <p class="text-xs text-slate-500 leading-relaxed border-t pt-4">⚠️ {t("disclaimer")}</p>
     </div>
   </div>
 </div>
