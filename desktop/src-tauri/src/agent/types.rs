@@ -155,6 +155,9 @@ impl Message {
 pub enum ToolKind {
     ReadOnly,
     Mutating,
+    /// The model's only channel to the user: `finish_task`. Free assistant
+    /// text is never shown, so a run without this call has no summary.
+    Report,
 }
 
 #[derive(Debug, Clone)]

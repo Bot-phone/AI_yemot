@@ -41,9 +41,15 @@ pub fn cap_for(tool: &str) -> usize {
         "list_files" => 800,
         "get_text_file" => 1_500,
         "get_system_info" => 300,
+        REPORT_TOOL => 50,
         _ => MAX_RESULT_TOKENS,
     }
 }
+
+/// The one tool whose input reaches the user. Everything the model writes as
+/// free text stays in the transcript only — that is what keeps the editor an
+/// editor and not a chat: an off-topic answer has nowhere to be displayed.
+pub const REPORT_TOOL: &str = "finish_task";
 
 /// The byte-identical receipt a deferred write returns. Byte stability matters:
 /// this text repeats once per write and a varying one would break the cache.
@@ -188,6 +194,18 @@ pub fn tool_specs() -> Vec<ToolSpec> {
             ),
             kind: ToolKind::Mutating,
         },
+        ToolSpec {
+            name: REPORT_TOOL,
+            description: "סיים את המשימה. זה הערוץ היחיד שמוצג למשתמש - טקסט חופשי שלך אינו מוצג. summary: שורות קצרות של השינויים שנרשמו ומה נדרש מהמשתמש (קבצי שמע להעלאה, החלטות פתוחות). question: רק אם בלי תשובה השינוי יהיה שגוי - שאלה אחת ממוקדת; אחרת null. קרא לכלי הזה פעם אחת, אחרי כל הכתיבות, וגם כשאין מה לשנות.",
+            input_schema: obj(
+                json!({
+                    "summary": { "type": "string" },
+                    "question": { "type": ["string", "null"] }
+                }),
+                &["summary", "question"],
+            ),
+            kind: ToolKind::Report,
+        },
     ]
 }
 
@@ -197,6 +215,27 @@ pub fn spec_of(name: &str) -> Option<ToolSpec> {
 
 pub fn is_mutating(name: &str) -> bool {
     spec_of(name).map(|t| t.kind == ToolKind::Mutating).unwrap_or(false)
+}
+
+pub fn is_report(name: &str) -> bool {
+    name == REPORT_TOOL
+}
+
+/// What the user sees for a `finish_task` call: the summary, then the question
+/// (if any) as its own paragraph. The flag says whether the model is waiting
+/// for an answer, so the UI can put the cursor in the refine box.
+pub fn render_report(input: &Value) -> (String, bool) {
+    let summary = s(input, "summary");
+    let question = s(input, "question");
+    let mut text = summary;
+    if !question.is_empty() {
+        if !text.is_empty() {
+            text.push_str("\n\n");
+        }
+        text.push_str("❓ ");
+        text.push_str(&question);
+    }
+    (text, !question.is_empty())
 }
 
 // ---------------------------------------------------------------------------
@@ -329,6 +368,7 @@ pub fn label_for(name: &str, input: &Value) -> String {
         "set_extension_params" => format!("כתיבת הגדרות: {}", s(input, "path")),
         "upload_text_file" => format!("כתיבת קובץ: {}", s(input, "path")),
         "upload_audio_file" => format!("העלאת שמע: {}", s(input, "dest_path")),
+        REPORT_TOOL => "סיכום המשימה".to_string(),
         other => other.to_string(),
     }
 }
@@ -442,6 +482,15 @@ pub async fn execute_tool(
         "set_extension_params" => set_extension_params(ctx, input, tool_use_id).await,
         "upload_text_file" => upload_text_file(ctx, input, tool_use_id).await,
         "upload_audio_file" => upload_audio_file(ctx, input, tool_use_id).await,
+        // The runner reads the input itself; this result only keeps the
+        // transcript well-formed for a later continuation.
+        REPORT_TOOL => {
+            if s(input, "summary").is_empty() && s(input, "question").is_empty() {
+                ToolOutcome::err("summary ריק - כתוב מה נרשם ומה נדרש מהמשתמש.")
+            } else {
+                ToolOutcome::ok("OK")
+            }
+        }
         _ => ToolOutcome::err("TOOL_NOT_AVAILABLE"),
     };
 
@@ -1041,6 +1090,7 @@ mod tests {
                 "set_extension_params",
                 "upload_text_file",
                 "upload_audio_file",
+                "finish_task",
             ]
         );
         assert!(is_mutating("set_extension_params"));
@@ -1151,6 +1201,30 @@ mod tests {
             "קריאת שלוחה: /3"
         );
         assert_eq!(label_for("get_system_info", &json!({})), "פרטי מערכת");
+    }
+
+    /// `finish_task` is the only user-facing channel: it is neither a read nor
+    /// a write, and its rendering carries the question as its own paragraph.
+    #[test]
+    fn report_tool_is_its_own_kind_and_renders_summary_then_question() {
+        let spec = spec_of(REPORT_TOOL).expect("finish_task is registered");
+        assert_eq!(spec.kind, ToolKind::Report);
+        assert!(is_report(REPORT_TOOL));
+        assert!(!is_mutating(REPORT_TOOL));
+        assert!(!is_report("set_extension_params"));
+
+        let (text, asks) = render_report(&json!({"summary": "נרשם `/3`", "question": null}));
+        assert_eq!(text, "נרשם `/3`");
+        assert!(!asks);
+
+        let (text, asks) = render_report(&json!({"summary": " נרשם ", "question": "לאן לנתב?"}));
+        assert_eq!(text, "נרשם\n\n❓ לאן לנתב?");
+        assert!(asks);
+
+        let (text, asks) = render_report(&json!({"summary": "", "question": "לאן לנתב?"}));
+        assert_eq!(text, "❓ לאן לנתב?");
+        assert!(asks);
+        assert_eq!(render_report(&json!({})), (String::new(), false));
     }
 
     #[test]

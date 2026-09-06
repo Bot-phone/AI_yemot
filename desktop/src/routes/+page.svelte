@@ -324,6 +324,8 @@
   let refineText = $state("");
   let refineBusy = $state(false);
   let refineError = $state("");
+  /** @type {HTMLInputElement | null} focused when the model asked a question. */
+  let refineInputEl = $state(null);
   /** Every instruction of the current task chain, oldest first. */
   /** @type {string[]} */
   let taskChain = $state([]);
@@ -1274,31 +1276,6 @@
     );
 
     subs.push(
-      listen("agent:text_delta", (event) => {
-        const p = /** @type {any} */ (event.payload);
-        if (!isCurrentRun(p)) return;
-        if (p.reset) {
-          // The attempt that streamed this block failed; the retry starts over,
-          // so drop the partial text instead of appending onto it.
-          // The retry row may already sit after it, so search backwards.
-          const i = agentTimeline.findLastIndex((it) => it.type === "text" && it.streaming);
-          if (i >= 0) {
-            agentTimeline = [...agentTimeline.slice(0, i), ...agentTimeline.slice(i + 1)];
-          }
-          return;
-        }
-        if (!p.delta) return;
-        const last = agentTimeline[agentTimeline.length - 1];
-        if (last && last.type === "text" && last.streaming) {
-          last.text += p.delta;
-          agentTimeline = [...agentTimeline];
-        } else {
-          pushTimeline({ type: "text", turn: agentTurn, text: p.delta, streaming: true });
-        }
-      })
-    );
-
-    subs.push(
       listen("agent:tool_started", (event) => {
         const p = /** @type {any} */ (event.payload);
         if (!isCurrentRun(p)) return;
@@ -1402,6 +1379,11 @@
         statusMessage = p.ok ? t("request_success") : agentStopLabel(p.stop);
         // The run just rewrote its task's record (unless history is off).
         void loadTaskHistory();
+        // The model asked a question (finish_task.question): the answer goes
+        // through "דייק את המשימה", so put the cursor there once it renders.
+        if (p.needs_input) {
+          void tick().then(() => refineInputEl?.focus());
+        }
       })
     );
 
@@ -1450,6 +1432,8 @@
         return t("agent_stop_truncated");
       case "refusal":
         return t("agent_stop_refusal");
+      case "no_report":
+        return t("agent_stop_no_report");
       default:
         return t("agent_stop_error");
     }
@@ -3005,6 +2989,7 @@
               <input
                 id="refine-input"
                 type="text"
+                bind:this={refineInputEl}
                 bind:value={refineText}
                 onkeydown={(e) => {
                   if (e.key === "Enter") {

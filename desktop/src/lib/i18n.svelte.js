@@ -200,6 +200,8 @@ export const LOCALES = {
       agent_stop_error: "הסתיים בשגיאה",
       agent_stop_truncated: "התשובה נקטעה",
       agent_stop_refusal: "המודל סירב לבצע את הבקשה",
+      agent_stop_no_report:
+        "לא התקבל סיכום. הכלי מיועד לעריכת קו ימות המשיח בלבד - אם זו הייתה המשימה, נסח אותה מחדש.",
       agent_error_title: "שגיאה בריצת הסוכן",
       agent_session_expired:
         "החיבור לימות המשיח פג. יש להתחבר מחדש (אימות דו-שלבי) ולהריץ את הבקשה מחדש.",
@@ -564,6 +566,8 @@ export const LOCALES = {
       agent_stop_error: "Finished with an error",
       agent_stop_truncated: "The response was truncated",
       agent_stop_refusal: "The model refused to perform the request",
+      agent_stop_no_report:
+        "No summary was received. This tool only edits a Yemot HaMashiach line - if that was the task, rephrase it.",
       agent_error_title: "Agent run error",
       agent_session_expired:
         "The Yemot HaMashiach session expired. Please sign in again (two-factor) and re-run the request.",

@@ -34,6 +34,10 @@ const RUN_BUDGET: Duration = Duration::from_secs(600);
 const MAX_ATTEMPTS: u32 = 4;
 const TREE_LINES: usize = 20;
 
+/// Sent once, as a user turn, when the model ends with free text instead of
+/// `finish_task`. Byte-stable: it lands in the transcript and in the cache.
+const REPORT_NUDGE: &str = "לא התקבל סיכום. טקסט חופשי אינו מוצג למשתמש - סיים בקריאה ל-finish_task: ב-summary מה נרשם ומה נדרש מהמשתמש, וב-question רק אם חסר לך פרט הכרחי. אם המשימה אינה נוגעת להגדרת הקו, כתוב ב-summary שהכלי מיועד לעריכת קו ימות המשיח בלבד.";
+
 /// Above this the run stops rather than paying for a prompt that no longer
 /// fits its purpose. History is never rewritten: collapsing old tool results
 /// invalidates the cached prefix, and re-reading the whole prompt uncached
@@ -1686,6 +1690,11 @@ async fn run_loop(ctx: RunContext, provider: Box<dyn Provider>, messages: Vec<Me
     let mut tool_calls: u32 = 0;
     let mut mutating_calls: u32 = 0;
     let mut final_text = String::new();
+    // The model's last free text. Never shown; it only feeds the legacy
+    // "described the change instead of calling the tool" safety net.
+    let mut last_free_text = String::new();
+    let mut needs_input = false;
+    let mut nudged = false;
     let mut stop = "max_turns";
     let mut ok = true;
     let mut guard = LoopGuard::default();
@@ -1747,10 +1756,11 @@ async fn run_loop(ctx: RunContext, provider: Box<dyn Provider>, messages: Vec<Me
         };
         usage.add(&response.usage);
 
+        // Free text is kept in the transcript but never displayed: the user
+        // sees only what the model puts into `finish_task`.
         let text = response.text();
         if !text.trim().is_empty() {
-            final_text = text.clone();
-            events::assistant_text(&ctx.app, &ctx.run_id, turn, &text);
+            last_free_text = text;
         }
         if !response.content.is_empty() {
             messages.push(Message {
@@ -1771,11 +1781,29 @@ async fn run_loop(ctx: RunContext, provider: Box<dyn Provider>, messages: Vec<Me
             stop = match response.stop {
                 StopReason::MaxTokens => "truncated",
                 StopReason::Refusal => "refusal",
-                _ => "end_turn",
+                _ => "no_report",
             };
-            ok = stop == "end_turn";
+            // Plain text at end of turn: one reminder, then give up. The
+            // reminder is a real user turn so the cached prefix is untouched.
+            if stop == "no_report" && !nudged && turn < MAX_TURNS {
+                nudged = true;
+                messages.push(Message {
+                    role: Role::User,
+                    content: vec![ContentBlock::Text(REPORT_NUDGE.to_string())],
+                });
+                continue;
+            }
+            ok = false;
             break;
         }
+
+        // `finish_task` ends the run. Whatever else rides in the same turn
+        // (a last write, say) is still executed and answered first.
+        let report = calls
+            .iter()
+            .take(MAX_TOOL_CALLS_PER_TURN)
+            .find(|(_, n, _)| tools::is_report(n))
+            .map(|(_, _, input)| tools::render_report(input));
 
         tool_calls += calls.len().min(MAX_TOOL_CALLS_PER_TURN) as u32;
         mutating_calls += calls
@@ -1789,6 +1817,17 @@ async fn run_loop(ctx: RunContext, provider: Box<dyn Provider>, messages: Vec<Me
             role: Role::User,
             content: results,
         });
+
+        if let Some((text, question)) = report {
+            final_text = text;
+            needs_input = question;
+            if !final_text.is_empty() {
+                events::assistant_text(&ctx.app, &ctx.run_id, turn, &final_text);
+            }
+            stop = "end_turn";
+            ok = true;
+            break;
+        }
 
         if guard.exhausted() {
             events::error(
@@ -1822,7 +1861,7 @@ async fn run_loop(ctx: RunContext, provider: Box<dyn Provider>, messages: Vec<Me
     // Legacy safety net: a model that "described" the change instead of calling
     // the write tool still produces actionable rows.
     if mutating_calls == 0 && ctx.proposed.lock().await.is_empty() {
-        let legacy = legacy_actions_from_text(&final_text);
+        let legacy = legacy_actions_from_text(&last_free_text);
         if !legacy.is_empty() {
             let mut slot = ctx.proposed.lock().await;
             for a in legacy {
@@ -1834,6 +1873,15 @@ async fn run_loop(ctx: RunContext, provider: Box<dyn Provider>, messages: Vec<Me
 
     let actions = ctx.proposed.lock().await.clone();
     events::actions_proposed(&ctx.app, &ctx.run_id, &actions);
+
+    // A missing summary is not a failure when there are changes to review:
+    // the diff is the deliverable. With nothing proposed it is — either the
+    // model answered off-topic (that answer is hidden by design) or it
+    // described the work instead of doing it.
+    if stop == "no_report" && !actions.is_empty() {
+        stop = "end_turn";
+        ok = true;
+    }
 
     // Retained for `continue_agent_run`; dropped with the handle when the next
     // run claims a slot.
@@ -1877,6 +1925,7 @@ async fn run_loop(ctx: RunContext, provider: Box<dyn Provider>, messages: Vec<Me
         ok,
         stop,
         &final_text,
+        needs_input,
         &run_usage,
     );
 }
@@ -2086,13 +2135,10 @@ async fn call_with_retry(
     started_at: Instant,
 ) -> Result<ProviderResponse, ProviderError> {
     let mut last: ProviderError = ProviderError::Transient("—".to_string());
-    // The provider streams into this; every batch becomes one `agent:text_delta`.
-    let on_delta = |d: &str| events::text_delta(&ctx.app, &ctx.run_id, d);
+    // Providers still stream (it keeps long turns alive), but the text is not
+    // forwarded: free assistant text is never shown to the user.
+    let on_delta = |_: &str| {};
     for attempt in 1..=MAX_ATTEMPTS {
-        if attempt > 1 {
-            // Whatever the failed attempt streamed is not part of this turn.
-            events::text_delta_reset(&ctx.app, &ctx.run_id);
-        }
         match provider.complete(req, &ctx.cancel, &on_delta).await {
             Ok(r) => return Ok(r),
             // Auth / BadRequest / Refusal / Cancelled: retrying cannot help.
