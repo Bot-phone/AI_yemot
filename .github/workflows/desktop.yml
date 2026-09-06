@@ -145,6 +145,18 @@ jobs:
         working-directory: desktop
         run: npm ci
 
+      # Release body: the version's CHANGELOG section plus the Hebrew usage
+      # guide (desktop/RELEASE_GUIDE.md), composed by .github/release-notes.sh.
+      - name: Release notes
+        id: notes
+        shell: bash
+        run: |
+          {
+            echo "body<<NOTES_EOF"
+            .github/release-notes.sh "${GITHUB_REF_NAME#v}"
+            echo "NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -152,7 +164,7 @@ jobs:
           projectPath: desktop
           tagName: v__VERSION__
           releaseName: 'AI yemot v__VERSION__'
-          releaseBody: 'הורידו את הקובץ המתאים למערכת ההפעלה שלכם.'
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
