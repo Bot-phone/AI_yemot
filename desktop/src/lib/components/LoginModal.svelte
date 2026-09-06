@@ -1,13 +1,15 @@
 <script>
   /**
-   * Single sign-in surface: system number + password, then the MFA step. The
-   * token-check flow lands directly on the MFA step, so there is no second,
-   * near-identical modal anywhere in the app.
+   * Single sign-in surface. Three steps: paste an existing token ("token"),
+   * create one from system number + password ("credentials"), then MFA. The
+   * settings token-check flow lands directly on the MFA step, so there is no
+   * second, near-identical modal anywhere in the app.
    */
   import { t } from "$lib/i18n.svelte.js";
 
   let {
     step = "credentials",
+    token = $bindable(""),
     username = $bindable(""),
     password = $bindable(""),
     showPassword = $bindable(false),
@@ -24,6 +26,10 @@
     onClose,
     /** @type {() => void} */
     onLogin,
+    /** @type {() => void} */
+    onTokenLogin,
+    /** @type {(step: "token" | "credentials") => void} */
+    onStepChange,
     /** @type {() => void} */
     onSendCode,
     /** @type {() => void} */
@@ -49,14 +55,19 @@
     );
   }
 
-  // The credentials step autofocuses its own first input. The MFA step is
-  // reached directly from `checkToken` too, where nothing in the dialog would
-  // otherwise hold focus at all — so move focus to its first real control.
+  // Each step moves focus to its first real control: the token / credentials
+  // steps switch in place via the links, and the MFA step is reached directly
+  // from `checkToken` too, where nothing in the dialog would otherwise hold
+  // focus at all.
   $effect(() => {
-    if (step !== "mfa" || !dialogRef) return;
-    const first = focusables().find(
-      (el) => el.id === "login-mfa-method" || el.id === "login-mfa-code"
-    );
+    if (!dialogRef) return;
+    const ids =
+      step === "mfa"
+        ? ["login-mfa-method", "login-mfa-code"]
+        : step === "token"
+          ? ["login-token"]
+          : ["login-username"];
+    const first = focusables().find((el) => ids.includes(el.id));
     (first ?? focusables()[0])?.focus();
   });
 
@@ -97,8 +108,8 @@
   >
     <div class="flex items-center justify-between border-b pb-3">
       <h3 id="login-modal-title" class="font-bold text-sm text-slate-800 flex items-center gap-2">
-        <span aria-hidden="true">{step === "credentials" ? "🔑" : "🔐"}</span>
-        <span>{step === "credentials" ? t("login_title") : t("mfa_modal_title")}</span>
+        <span aria-hidden="true">{step === "mfa" ? "🔐" : "🔑"}</span>
+        <span>{step === "token" ? t("token_step_title") : step === "credentials" ? t("login_title") : t("mfa_modal_title")}</span>
       </h3>
       <button
         type="button"
@@ -111,15 +122,47 @@
       </button>
     </div>
 
-    {#if step === "credentials"}
+    {#if step === "token"}
+      <p class="text-xs text-slate-600 leading-relaxed">{t("token_step_desc")}</p>
+
+      <div>
+        <label for="login-token" class="block text-xs font-semibold text-slate-600 mb-1">{t("token_label")}</label>
+        <input
+          id="login-token"
+          type="text"
+          dir="ltr"
+          autocomplete="off"
+          spellcheck="false"
+          bind:value={token}
+          onkeydown={(e) => { if (e.key === "Enter" && !loading) onTokenLogin(); }}
+          placeholder={t("token_placeholder")}
+          class="w-full text-xs font-mono rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+        />
+      </div>
+
+      <button
+        type="button"
+        onclick={onTokenLogin}
+        disabled={loading}
+        class="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg shadow transition disabled:opacity-50"
+      >
+        {t("token_login_btn")}
+      </button>
+
+      <button
+        type="button"
+        onclick={() => onStepChange("credentials")}
+        class="w-full py-2 border border-slate-300 text-slate-700 text-xs font-medium rounded-lg hover:bg-slate-50 transition"
+      >
+        {t("create_token_link")}
+      </button>
+    {:else if step === "credentials"}
       <div>
         <label for="login-username" class="block text-xs font-semibold text-slate-600 mb-1">{t("system_number")}</label>
-        <!-- svelte-ignore a11y_autofocus -->
         <input
           id="login-username"
           type="text"
           dir="ltr"
-          autofocus
           bind:value={username}
           placeholder={t("system_number_placeholder")}
           class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
@@ -142,6 +185,7 @@
           type={showPassword ? "text" : "password"}
           dir="ltr"
           bind:value={password}
+          onkeydown={(e) => { if (e.key === "Enter" && !loading) onLogin(); }}
           placeholder={t("password_placeholder")}
           class="w-full text-xs rounded-lg border border-slate-300 p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
         />
@@ -154,6 +198,14 @@
         class="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg shadow transition disabled:opacity-50"
       >
         {t("login_btn")}
+      </button>
+
+      <button
+        type="button"
+        onclick={() => onStepChange("token")}
+        class="w-full text-xs text-blue-600 hover:underline"
+      >
+        {t("have_token_link")}
       </button>
     {:else}
       <p class="text-xs text-slate-600 leading-relaxed">{t("mfa_modal_desc")}</p>

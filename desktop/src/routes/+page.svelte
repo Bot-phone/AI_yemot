@@ -149,7 +149,8 @@
   let loginPassword = $state("");
   let loginShowPassword = $state(false);
   let loginToken = $state("");
-  let loginStep = $state("credentials"); // "credentials" | "mfa"
+  let loginTokenInput = $state("");
+  let loginStep = $state("token"); // "token" | "credentials" | "mfa"
   /** @type {any[]} */
   let loginMethods = $state([]);
   let loginMethodId = $state("");
@@ -2361,8 +2362,12 @@
   /**
    * @param {boolean} [keepPendingRerun] true only for the `session_expired`
    *   path, which opens the modal precisely in order to re-run afterwards.
+   * @param {"token" | "credentials"} [step] first-run onboarding starts on the
+   *   token field (with a link to create one); re-login after an expired
+   *   session, and "get new token" from settings, start on the credentials form
+   *   since the token is exactly what stopped working there.
    */
-  function openLoginModal(keepPendingRerun = false) {
+  function openLoginModal(keepPendingRerun = false, step = "credentials") {
     // Otherwise a stale flag from an earlier expired run would make an unrelated
     // login silently fire off the previous prompt again.
     if (!keepPendingRerun) pendingRerun = false;
@@ -2370,7 +2375,8 @@
     loginUsername = "";
     loginPassword = "";
     loginToken = "";
-    loginStep = "credentials";
+    loginTokenInput = "";
+    loginStep = step;
     loginMethods = [];
     loginMethodId = "";
     loginSendType = "";
@@ -2432,6 +2438,46 @@
     // demoted to a fresh task that has forgotten everything before it.
     if (rerun) {
       await retryRun();
+    }
+  }
+
+  /**
+   * Switch the modal between its token field and the credentials form.
+   * @param {"token" | "credentials"} step
+   */
+  function setLoginStep(step) {
+    loginStep = step;
+    loginError = "";
+    loginStatus = "";
+  }
+
+  /** Token step: verify a pasted token and adopt it; MFA lands on the MFA step. */
+  async function handleTokenLogin() {
+    loginError = "";
+    const token = loginTokenInput.trim();
+    if (!token) {
+      loginError = t("enter_token_first");
+      return;
+    }
+    loginLoading = true;
+    loginStatus = t("checking_token");
+    try {
+      const res = await invoke("check_yemot_token", { token });
+      if (res.success) {
+        await applyLoginToken(token);
+        tokenStatus = { valid: true, message: res.message };
+      } else if (res.mfa_required) {
+        loginToken = token;
+        loginStatus = t("mfa_required");
+        await loadLoginMethods();
+      } else {
+        loginError = res.message;
+      }
+    } catch (e) {
+      loginError = t("comm_error", { error: e });
+    } finally {
+      loginLoading = false;
+      if (loginStatus === t("checking_token")) loginStatus = "";
     }
   }
 
@@ -2599,7 +2645,7 @@
           class="text-xs rounded-lg border border-slate-300 bg-white p-1.5 focus:ring-2 focus:ring-blue-500 focus:outline-none cursor-pointer"
         >
           {#each availableLocales as loc}
-            <option value={loc.code}>{loc.flag} {loc.nativeName}</option>
+            <option value={loc.code}>{loc.nativeName}</option>
           {/each}
         </select>
 
@@ -2668,7 +2714,7 @@
             {#if !yemotToken.trim()}
               <button
                 type="button"
-                onclick={() => openLoginModal()}
+                onclick={() => openLoginModal(false, "token")}
                 class="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition"
               >
                 {t("onboarding_open_login")}
@@ -3194,6 +3240,7 @@
   {#if showLoginModal}
     <LoginModal
       step={loginStep}
+      bind:token={loginTokenInput}
       bind:username={loginUsername}
       bind:password={loginPassword}
       bind:showPassword={loginShowPassword}
@@ -3207,6 +3254,8 @@
       {rtl}
       onClose={closeLoginModal}
       onLogin={handleLogin}
+      onTokenLogin={handleTokenLogin}
+      onStepChange={setLoginStep}
       onSendCode={handleSendLoginCode}
       onValidateCode={handleValidateLoginCode}
       onBack={backToCredentials}
