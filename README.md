@@ -98,3 +98,16 @@ cd src-tauri && cargo test --lib   # backend
 ```
 
 Conventions for contributors and coding agents are in [`CLAUDE.md`](CLAUDE.md).
+
+## License
+
+Source-available, not open source. See [`LICENSE`](LICENSE) (English and
+Hebrew). In short:
+
+- **Source code** — personal, non-public, non-commercial use only; keep the
+  attribution to this project.
+- **Built software** (the installers on the Releases page) — may be shared
+  publicly, free of charge, for non-commercial use, with attribution.
+- The Yemot HaMashiach documentation in `knowledge/` belongs to its authors.
+
+Any other use needs written permission from the copyright holder.

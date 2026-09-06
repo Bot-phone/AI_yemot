@@ -1,0 +1,90 @@
+AI yemot License
+================
+
+Copyright (c) 2025-2026 Bot-phone (https://github.com/Bot-phone/AI_yemot)
+
+This is not an open-source license in the OSI sense. It is a source-available
+license with two parts: one for the source code, one for the built software.
+The Hebrew text follows the English text; in case of doubt the English text
+governs.
+
+1. Definitions
+   "Source" means the contents of this repository: code, configuration,
+   documentation and build scripts. "Software" means the executable programs
+   built from the Source (installers, binaries, app bundles), including the
+   builds published on the project's GitHub Releases page.
+   "Commercial" means any use for which payment, a fee or other consideration
+   is received, or that is part of a paid product or service.
+   "Attribution" means keeping this copyright notice and a visible reference to
+   the original project, "AI yemot" at https://github.com/Bot-phone/AI_yemot.
+
+2. Source
+   You may read, download, build and modify the Source for your own personal,
+   non-public, non-commercial use. You may not publish, redistribute, sublicense
+   or sell the Source or any modified version of it, in whole or in part, and
+   you may not offer it as a service to others. Attribution is required in any
+   copy you keep or build.
+
+3. Software
+   You may use the Software and redistribute unmodified copies of it publicly,
+   free of charge and for non-commercial purposes only, provided Attribution is
+   kept. You may not sell the Software, charge for access to it, or bundle it
+   into a Commercial product or service.
+
+4. Third-party material
+   The Yemot HaMashiach documentation corpus in `knowledge/` belongs to its
+   authors and is included for the Software's own use; this license grants no
+   rights over it beyond that use. Third-party dependencies keep their own
+   licenses.
+
+5. No warranty
+   THE SOURCE AND THE SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+   KIND, EXPRESS OR IMPLIED. THE AUTHORS ARE NOT LIABLE FOR ANY DAMAGE ARISING
+   FROM THEIR USE, INCLUDING CHANGES MADE TO A PHONE SYSTEM.
+
+6. Other permissions
+   Any use not allowed above requires written permission from the copyright
+   holder.
+
+------------------------------------------------------------------------
+
+רישיון AI yemot
+================
+
+כל הזכויות שמורות (c) 2025-2026 Bot-phone (https://github.com/Bot-phone/AI_yemot)
+
+זהו אינו רישיון קוד פתוח במובן המקובל, אלא רישיון "קוד גלוי" בשני חלקים: אחד
+לקוד המקור ואחד לתוכנה הבנויה. במקרה של סתירה, הנוסח האנגלי קובע.
+
+1. הגדרות
+   "מקור" – תוכן המאגר הזה: קוד, קבצי הגדרה, תיעוד וסקריפטי בנייה. "תוכנה" –
+   התוכניות הניתנות להרצה שנבנו מהמקור (קבצי התקנה, קבצים בינאריים, חבילות
+   אפליקציה), כולל הגרסאות המפורסמות בדף ה-Releases של הפרויקט ב-GitHub.
+   "מסחרי" – כל שימוש שבגינו מתקבל תשלום, עמלה או תמורה אחרת, או שהוא חלק
+   ממוצר או שירות בתשלום.
+   "קרדיט" – שמירת הודעת זכויות היוצרים הזו והפניה גלויה לפרויקט המקורי,
+   "AI yemot" בכתובת https://github.com/Bot-phone/AI_yemot.
+
+2. המקור
+   מותר לקרוא, להוריד, לבנות ולשנות את המקור לשימוש אישי, לא ציבורי ולא מסחרי
+   בלבד. אסור לפרסם, להפיץ, להעניק רישיון משנה או למכור את המקור או גרסה
+   שונה שלו, כולו או חלקו, ואסור להציע אותו כשירות לאחרים. חובה לשמור קרדיט
+   בכל עותק שנשמר או נבנה.
+
+3. התוכנה
+   מותר להשתמש בתוכנה ולהפיץ עותקים שלה ללא שינוי באופן ציבורי, ללא תשלום
+   ולמטרות לא מסחריות בלבד, בתנאי שנשמר קרדיט. אסור למכור את התוכנה, לגבות
+   תשלום על גישה אליה, או לצרף אותה למוצר או שירות מסחרי.
+
+4. חומרים של צדדים שלישיים
+   מאגר התיעוד של ימות המשיח בתיקייה `knowledge/` שייך למחבריו ומצורף לצורך
+   פעולת התוכנה בלבד; רישיון זה אינו מעניק בו זכויות מעבר לכך. תלויות של צדדים
+   שלישיים כפופות לרישיונות שלהן.
+
+5. ללא אחריות
+   המקור והתוכנה מסופקים "כמות שהם" (AS IS), ללא אחריות מכל סוג, מפורשת או
+   משתמעת. המחברים אינם אחראים לכל נזק הנובע מהשימוש בהם, לרבות שינויים
+   שבוצעו במערכת טלפוניה.
+
+6. הרשאות נוספות
+   כל שימוש שאינו מותר לעיל מחייב אישור בכתב מבעל זכויות היוצרים.

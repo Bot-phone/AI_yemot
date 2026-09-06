@@ -1,8 +1,9 @@
 [package]
 name = "desktop"
-version = "1.0.0"
+version = "0.1.0"
 description = "AI yemot — עורך קווי ימות המשיח מבוסס AI"
 authors = ["Bot-phone"]
+license-file = "../../LICENSE"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

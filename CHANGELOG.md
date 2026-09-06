@@ -3,7 +3,7 @@
 All notable changes to AI yemot. Versions follow the crate version in
 `desktop/src-tauri/Cargo.toml`, which is also the release tag (`v<version>`).
 
-## 1.0.0
+## 0.1.0
 
 The first release of AI yemot as a **desktop editor for Yemot HaMashiach phone
 lines**. The browser client that posted the Yemot token to a Google Apps Script
