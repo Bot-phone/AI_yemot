@@ -196,6 +196,11 @@
       await relaunch();
       return;
     }
+    if (updateInfo?.portable) {
+      // The portable build never runs the installer: hand out the new file.
+      await openUrl(updateInfo.portable_url || updateInfo.release_url);
+      return;
+    }
     updateState = "downloading";
     updateProgress = 0;
     updateError = "";
@@ -2667,6 +2672,8 @@
                 <span>{t("update_downloading", { percent: updateProgress })}</span>
               {:else if updateState === "ready"}
                 <span>{t("update_restart")}</span>
+              {:else if updateInfo.portable}
+                <span>{t("update_portable", { version: updateInfo.latest_version })}</span>
               {:else}
                 <span>{t("update_install", { version: updateInfo.latest_version })}</span>
               {/if}

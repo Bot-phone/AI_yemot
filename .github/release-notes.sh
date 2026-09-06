@@ -15,6 +15,7 @@ repo="${GITHUB_REPOSITORY:-Bot-phone/AI_yemot}"
 dl="https://github.com/${repo}/releases/download/v${version}"
 
 exe="AI_yemot_${version}_x64-setup.exe"
+portable="AI_yemot_${version}_x64-portable.exe"
 msi="AI_yemot_${version}_x64_en-US.msi"
 dmg="AI_yemot_${version}_aarch64.dmg"
 appimage="AI_yemot_${version}_amd64.AppImage"
@@ -29,8 +30,11 @@ echo
 echo '| מערכת | קובץ להורדה |'
 echo '|---|---|'
 echo "| **Windows** | [${exe}](${dl}/${exe}) (מומלץ) · [${msi}](${dl}/${msi}) |"
+echo "| **Windows — גרסה ניידת** | [${portable}](${dl}/${portable}) |"
 echo "| **macOS** (Apple Silicon) | [${dmg}](${dl}/${dmg}) |"
 echo "| **Linux** | [${appimage}](${dl}/${appimage}) · [${deb}](${dl}/${deb}) |"
+echo
+echo '**הגרסה הניידת** היא קובץ `.exe` יחיד שלא דורש התקנה: שומרים אותו בכל מקום (גם על דיסק-און-קי) ומפעילים. הוא מסתמך על רכיב WebView2 של מיקרוסופט, שמותקן כברירת מחדל ב-Windows 10 ו-11; אם ההפעלה נכשלת, מתקינים אותו פעם אחת מ-[הדף של מיקרוסופט](https://developer.microsoft.com/microsoft-edge/webview2/). הגרסה הניידת לא מתקינה עדכונים בעצמה: כשיוצאת גרסה חדשה היא מציעה להוריד את הקובץ החדש במקומה. פרטי ההתחברות נשמרים במנהל ההרשאות של Windows במחשב שבו מריצים, לא בתוך הקובץ.'
 echo
 cat "$root/desktop/RELEASE_GUIDE.md"
 echo

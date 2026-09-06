@@ -175,3 +175,30 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+
+      # Portable Windows build: the very executable the NSIS/MSI installers
+      # carry, uploaded on its own. It embeds the frontend and the knowledge
+      # index, needs only the system WebView2, and never runs the updater
+      # (updater.rs recognises the "-portable" file name and offers a download
+      # instead). The name must keep "portable" — both updater.rs and
+      # release-notes.sh rely on it.
+      - name: Upload portable executable
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          exe=""
+          for candidate in desktop/src-tauri/target/release/AI_yemot.exe desktop/src-tauri/target/release/desktop.exe; do
+            if [ -f "$candidate" ]; then exe="$candidate"; break; fi
+          done
+          if [ -z "$exe" ]; then
+            echo "no release executable found under desktop/src-tauri/target/release" >&2
+            ls desktop/src-tauri/target/release >&2 || true
+            exit 1
+          fi
+          portable="AI_yemot_${version}_x64-portable.exe"
+          cp "$exe" "$portable"
+          gh release upload "v${version}" "$portable" --clobber

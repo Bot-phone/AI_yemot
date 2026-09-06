@@ -18,6 +18,57 @@ pub struct UpdateCheckResult {
     pub latest_version: String,
     pub release_url: String,
     pub release_notes: String,
+    /// This process runs from the portable single-file build. The updater
+    /// plugin would download and run the NSIS installer, turning a portable
+    /// copy into an installed app, so the UI only offers a download instead.
+    pub portable: bool,
+    /// Direct link to the portable asset of the latest release, when it has
+    /// one; empty otherwise (the UI falls back to `release_url`).
+    pub portable_url: String,
+}
+
+/// Marker file that turns any copy of the app into a portable one when it
+/// sits next to the executable (useful for people who rename the file).
+const PORTABLE_MARKER: &str = "portable";
+
+/// `true` when the executable at `exe` is the portable build: its file name
+/// carries "portable" (CI names it `AI_yemot_<version>_x64-portable.exe`) or
+/// a `portable` marker file lies beside it.
+fn is_portable_exe(exe: &std::path::Path, marker_beside: impl Fn(&std::path::Path) -> bool) -> bool {
+    let by_name = exe
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase().contains("portable"))
+        .unwrap_or(false);
+    by_name || exe.parent().map(|d| marker_beside(&d.join(PORTABLE_MARKER))).unwrap_or(false)
+}
+
+/// Whether this process is the portable build. Evaluated once.
+pub fn is_portable() -> bool {
+    static PORTABLE: OnceLock<bool> = OnceLock::new();
+    *PORTABLE.get_or_init(|| {
+        std::env::current_exe()
+            .map(|exe| is_portable_exe(&exe, |m| m.is_file()))
+            .unwrap_or(false)
+    })
+}
+
+/// The `browser_download_url` of the release asset whose name marks it as the
+/// portable build, if any.
+fn portable_asset_url(release: &serde_json::Value) -> String {
+    release["assets"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|a| {
+            a["name"]
+                .as_str()
+                .map(|n| n.to_ascii_lowercase().contains("portable"))
+                .unwrap_or(false)
+        })
+        .and_then(|a| a["browser_download_url"].as_str())
+        .unwrap_or("")
+        .to_string()
 }
 
 /// One client for the whole process: building a `reqwest::Client` per call
@@ -46,6 +97,8 @@ pub async fn check_for_updates() -> Result<UpdateCheckResult, String> {
         latest_version: current_version.clone(),
         release_url: String::new(),
         release_notes: String::new(),
+        portable: is_portable(),
+        portable_url: String::new(),
     };
 
     let res = match client()?.get(RELEASES_LATEST_URL).send().await {
@@ -76,6 +129,8 @@ pub async fn check_for_updates() -> Result<UpdateCheckResult, String> {
         latest_version: tag.to_string(),
         release_url: json["html_url"].as_str().unwrap_or("").to_string(),
         release_notes: json["body"].as_str().unwrap_or("").to_string(),
+        portable: is_portable(),
+        portable_url: portable_asset_url(&json),
     })
 }
 
@@ -112,7 +167,32 @@ fn is_newer_version(latest: &str, current: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_newer_version;
+    use super::{is_newer_version, is_portable_exe, portable_asset_url};
+    use std::path::Path;
+
+    #[test]
+    fn portable_by_file_name_or_marker() {
+        let no_marker = |_: &Path| false;
+        assert!(is_portable_exe(Path::new(r"D:\usb\AI_yemot_0.1.0_x64-portable.exe"), no_marker));
+        assert!(is_portable_exe(Path::new("/tmp/ai_yemot-PORTABLE"), no_marker));
+        assert!(!is_portable_exe(Path::new(r"C:\Program Files\AI_yemot\AI_yemot.exe"), no_marker));
+        // renamed copy with a `portable` file beside it
+        assert!(is_portable_exe(Path::new("usb/yemot.exe"), |m| m == Path::new("usb/portable")));
+        assert!(!is_portable_exe(Path::new("usb/yemot.exe"), |m| m == Path::new("other/portable")));
+    }
+
+    #[test]
+    fn portable_asset_is_picked_from_the_release() {
+        let release = serde_json::json!({
+            "assets": [
+                {"name": "AI_yemot_0.2.0_x64-setup.exe", "browser_download_url": "https://x/setup.exe"},
+                {"name": "AI_yemot_0.2.0_x64-portable.exe", "browser_download_url": "https://x/portable.exe"}
+            ]
+        });
+        assert_eq!(portable_asset_url(&release), "https://x/portable.exe");
+        assert_eq!(portable_asset_url(&serde_json::json!({"assets": []})), "");
+        assert_eq!(portable_asset_url(&serde_json::json!({})), "");
+    }
 
     #[test]
     fn plain_versions() {

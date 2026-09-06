@@ -50,7 +50,8 @@ proposals, it does not open a new conversation.
 
 Download the installer for your OS from the
 [latest release](https://github.com/Bot-phone/AI_yemot/releases/latest) —
-Windows (`.msi` / `.exe`), macOS (`.dmg`), Linux (`.AppImage` / `.deb`).
+Windows (`.msi` / `.exe`, or the single-file `-portable.exe` that needs no
+installation), macOS (`.dmg`), Linux (`.AppImage` / `.deb`).
 
 The installers are **not code-signed**, so Windows SmartScreen shows a
 "Windows protected your PC" warning on first run: choose *More info* → *Run

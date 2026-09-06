@@ -11,6 +11,18 @@ All notable changes to AI yemot. Versions follow the crate version in
   downloads and installs the new version after verifying its minisign
   signature against the public key built into the app. Release builds are
   signed in CI and publish `latest.json` next to the installers.
+- Portable Windows build: every release also ships
+  `AI_yemot_<version>_x64-portable.exe`, the bare executable with the frontend
+  and the knowledge index inside. It runs from anywhere with the system
+  WebView2, and instead of running the installer on update it offers the new
+  portable file for download (detected by the `-portable` file name, or by a
+  `portable` marker file next to a renamed copy).
+
+### Knowledge base
+
+- Full-text search in the knowledge window over the whole corpus, including the
+  system-messages table, with the matching section and a snippet per file;
+  opening a hit jumps to that section. Code blocks get a copy button.
 
 
 The first release of AI yemot as a **desktop editor for Yemot HaMashiach phone
