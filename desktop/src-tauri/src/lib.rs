@@ -23,6 +23,7 @@ pub fn run() {
             knowledge::get_knowledge_files,
             knowledge::get_knowledge_file_content,
             knowledge::search_knowledge_files,
+            knowledge::search_knowledge_text,
             updater::check_for_updates,
             yemot::check_yemot_token,
             // `execute_yemot_actions` is still the script-mode write path in

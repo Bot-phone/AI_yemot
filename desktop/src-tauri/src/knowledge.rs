@@ -70,6 +70,79 @@ pub fn search_knowledge_files(query: &str) -> Vec<KnowledgeFileItem> {
         .collect()
 }
 
+/// תוצאת חיפוש חופשי במאגר, לתצוגה ברשימת הקבצים של ה-UI.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct KnowledgeHit {
+    pub name: String,
+    pub size: usize,
+    /// כותרת הסעיף שבו ההתאמה הטובה ביותר; ריק כשההתאמה היא בשם הקובץ.
+    pub heading: String,
+    /// שורה-שתיים סביב ההתאמה; ריק כשההתאמה היא בשם הקובץ.
+    pub snippet: String,
+}
+
+/// מקסימום קבצים בתשובת החיפוש החופשי.
+const UI_SEARCH_MAX_FILES: usize = 40;
+/// תקציב טוקנים לקטע בתוצאת UI.
+const UI_SNIPPET_TOKENS: usize = 40;
+
+/// חיפוש חופשי על כל תוכן המאגר (כולל טבלת הודעות המערכת) עבור חלון הידע.
+///
+/// התאמות בשם הקובץ קודמות, ואחריהן קבצים לפי הנתח המנוקד הכי גבוה שלהם.
+/// מחזיר קובץ אחד לכל היותר פעם אחת, עם כותרת הסעיף והקטע של ההתאמה הטובה.
+#[tauri::command]
+pub fn search_knowledge_text(query: &str) -> Vec<KnowledgeHit> {
+    let q = query.trim();
+    if q.is_empty() {
+        return get_knowledge_files()
+            .into_iter()
+            .map(|f| KnowledgeHit {
+                name: f.name,
+                size: f.size,
+                heading: String::new(),
+                snippet: String::new(),
+            })
+            .collect();
+    }
+
+    let mut out: Vec<KnowledgeHit> = search_knowledge_files(q)
+        .into_iter()
+        .map(|f| KnowledgeHit {
+            name: f.name,
+            size: f.size,
+            heading: String::new(),
+            snippet: String::new(),
+        })
+        .collect();
+    let mut seen: HashSet<String> = out.iter().map(|h| h.name.clone()).collect();
+
+    let idx = index();
+    let qterms: HashSet<String> = tokenize(&normalize(q))
+        .iter()
+        .flat_map(|t| term_variants(t))
+        .collect();
+    for (ci, _) in rank_scored_with(idx, q, None, 10, true) {
+        if out.len() >= UI_SEARCH_MAX_FILES {
+            break;
+        }
+        let ch = &idx.chunks[ci as usize];
+        let name = &idx.files[ch.file as usize];
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        out.push(KnowledgeHit {
+            name: name.clone(),
+            size: KNOWLEDGE_DIR
+                .get_file(name)
+                .map(|f| f.contents().len())
+                .unwrap_or(0),
+            heading: heading_label(&ch.heading).to_string(),
+            snippet: snippet_for(chunk_text(idx, ci), &qterms, UI_SNIPPET_TOKENS),
+        });
+    }
+    out
+}
+
 // ---------------------------------------------------------------------------
 // פרמטרים של הדירוג (הנרמול/הטוקניזציה נמצאים ב-knowledge_text.rs)
 // ---------------------------------------------------------------------------
@@ -422,6 +495,18 @@ fn rank_scored(
     file_filter: Option<&str>,
     top_k: usize,
 ) -> Vec<(u32, f64)> {
+    rank_scored_with(idx, query, file_filter, top_k, false)
+}
+
+/// כמו `rank_scored`, עם שליטה בהחרגת טבלת קודי ההודעות. הסוכן מחריג אותה
+/// (הרעש שלה בחיפוש BM25 גדול), חיפוש המשתמש במאגר מכליל אותה.
+fn rank_scored_with(
+    idx: &Index,
+    query: &str,
+    file_filter: Option<&str>,
+    top_k: usize,
+    include_messages: bool,
+) -> Vec<(u32, f64)> {
     let qtokens = tokenize(&normalize(query));
 
     let allowed: Option<HashSet<u32>> = file_filter.map(|f| {
@@ -436,7 +521,7 @@ fn rank_scored(
         set
     });
     // טבלת קודי ההודעות מוחרגת מ-BM25 אלא אם ביקשו אותה במפורש בפילטר קובץ.
-    let drop_messages = allowed.is_none();
+    let drop_messages = allowed.is_none() && !include_messages;
     let keep = |ci: u32| -> bool {
         let f = idx.chunks[ci as usize].file;
         if drop_messages && idx.messages_file == Some(f) {
@@ -1448,6 +1533,46 @@ mod tests {
         assert_eq!(expand_clitics("של"), vec!["של".to_string()]);
         // לא נוגעים בלטינית
         assert_eq!(expand_clitics("menu"), vec!["menu".to_string()]);
+    }
+
+    /// החיפוש החופשי של ה-UI: שם קובץ קודם, כל קובץ פעם אחת, וטבלת ההודעות
+    /// נכללת (בניגוד לחיפוש של הסוכן).
+    #[test]
+    fn ui_search_dedups_files_and_includes_messages() {
+        assert!(search_knowledge_text("   ").len() == get_knowledge_files().len());
+
+        let hits = search_knowledge_text("שלוחה");
+        assert!(!hits.is_empty());
+        let names: Vec<&str> = hits.iter().map(|h| h.name.as_str()).collect();
+        let mut dedup = names.clone();
+        dedup.sort();
+        dedup.dedup();
+        assert_eq!(dedup.len(), names.len(), "each file at most once");
+        assert!(hits.len() <= UI_SEARCH_MAX_FILES);
+        // name matches come first and carry no heading
+        let first_content = names.iter().position(|n| {
+            !n.to_lowercase().contains("שלוחה")
+        });
+        if let Some(i) = first_content {
+            assert!(hits[..i].iter().all(|h| h.heading.is_empty()));
+            assert!(hits[i..].iter().all(|h| !h.heading.is_empty()));
+        }
+
+        let idx = index();
+        let mf = idx.messages_file.expect("messages file indexed");
+        let mname = &idx.files[mf as usize];
+        // a phrase that only the messages table carries in bulk
+        let hits = search_knowledge_text("M1001");
+        assert!(
+            hits.iter().any(|h| &h.name == mname),
+            "messages table is searchable from the UI"
+        );
+        assert!(
+            rank_scored(idx, "M1001", None, 5)
+                .iter()
+                .all(|(c, _)| idx.chunks[*c as usize].file != mf),
+            "the agent ranker still drops it"
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
 <script>
   /** Browser for the knowledge base embedded in the binary. */
   import { t } from "$lib/i18n.svelte.js";
-  import { renderKnowledgeMarkdown } from "$lib/markdown.js";
+  import { renderKnowledgeMarkdown, handleCopyPreClick } from "$lib/markdown.js";
 
   let {
     totalCount = 0,
@@ -18,7 +18,7 @@
     onClose,
     /** @type {() => void} */
     onSearchInput,
-    /** @type {(name: string) => void} */
+    /** @type {(name: string, heading: string | null) => void} */
     onOpenFile,
     /** @type {() => void} */
     onCopy,
@@ -38,6 +38,12 @@
   });
 
   let renderedHtml = $derived(renderKnowledgeMarkdown(content));
+
+  /** @param {MouseEvent} e */
+  function handleProseClick(e) {
+    void handleCopyPreClick(e);
+    onContentClick?.(e);
+  }
 </script>
 
 <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
@@ -79,15 +85,25 @@
           class="w-full text-xs rounded-lg border border-slate-300 p-2 mb-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
         />
         <div class="space-y-1">
-          {#each matches as file}
+          {#each matches as file (file.name)}
             <button
               type="button"
-              onclick={() => onOpenFile(file.name)}
-              class="w-full {rtl ? 'text-right' : 'text-left'} p-2 text-xs rounded-lg hover:bg-blue-50 hover:text-blue-700 transition flex items-center justify-between {fileName === file.name ? 'bg-blue-100 font-bold text-blue-800' : 'text-slate-700'}"
+              onclick={() => onOpenFile(file.name, file.heading || null)}
+              class="w-full {rtl ? 'text-right' : 'text-left'} p-2 text-xs rounded-lg hover:bg-blue-50 hover:text-blue-700 transition {fileName === file.name ? 'bg-blue-100 text-blue-800' : 'text-slate-700'}"
             >
-              <span class="truncate">{file.name.replace('.txt', '')}</span>
-              <span class="text-xs text-slate-500">{(file.size / 1024).toFixed(1)}k</span>
+              <span class="flex items-center justify-between gap-2 {fileName === file.name ? 'font-bold' : ''}">
+                <span class="truncate">{file.name.replace('.txt', '')}</span>
+                <span class="text-xs text-slate-500 shrink-0">{(file.size / 1024).toFixed(1)}k</span>
+              </span>
+              {#if file.heading}
+                <span class="block mt-0.5 truncate text-[11px] text-blue-700">› {file.heading}</span>
+              {/if}
+              {#if file.snippet}
+                <span class="block mt-0.5 text-[11px] leading-snug text-slate-500 line-clamp-2 whitespace-pre-line">{file.snippet}</span>
+              {/if}
             </button>
+          {:else}
+            <div class="p-2 text-xs text-slate-500">{t("no_knowledge_results")}</div>
           {/each}
         </div>
       </div>
@@ -145,7 +161,7 @@
             {:else}
               <!-- svelte-ignore a11y_click_events_have_key_events -->
               <!-- svelte-ignore a11y_no_static_element_interactions -->
-              <div class="knowledge-prose text-xs leading-relaxed" onclick={onContentClick}>
+              <div class="knowledge-prose text-xs leading-relaxed" onclick={handleProseClick}>
                 {@html renderedHtml}
               </div>
             {/if}

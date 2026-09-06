@@ -186,6 +186,33 @@ body {
   margin: 0.75rem 0;
   border: 1px solid #334155;
 }
+/* Copy button injected into every code block by `renderKnowledgeMarkdown`. */
+.knowledge-prose .md-pre-wrap {
+  position: relative;
+  margin: 0.75rem 0;
+}
+.knowledge-prose .md-pre-wrap > pre {
+  margin: 0;
+}
+.knowledge-prose .md-copy-btn {
+  position: absolute;
+  top: 0.35rem;
+  inset-inline-end: 0.35rem;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #cbd5e1;
+  background: #1e293b;
+  border: 1px solid #475569;
+  border-radius: 0.35rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.knowledge-prose .md-pre-wrap:hover .md-copy-btn,
+.knowledge-prose .md-copy-btn:focus-visible {
+  opacity: 1;
+}
 .knowledge-prose code {
   background-color: #f1f5f9;
   color: #4338ca;

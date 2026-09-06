@@ -126,7 +126,8 @@ export const LOCALES = {
       final_answer_title: "סיכום המערכת:",
 
       knowledge_modal_title: "בסיס ידע מוטמע ({count} קבצים בזיכרון)",
-      search_knowledge: "חיפוש קובץ ידע...",
+      search_knowledge: "חיפוש במאגר הידע...",
+      no_knowledge_results: "לא נמצאו תוצאות",
       select_file_hint: "בחר קובץ מהרשימה לצפייה בתיעוד",
       view_formatted: "תצוגה מעוצבת",
       view_raw: "קוד גולמי",
@@ -492,7 +493,8 @@ export const LOCALES = {
       final_answer_title: "System summary:",
 
       knowledge_modal_title: "Embedded knowledge base ({count} files in memory)",
-      search_knowledge: "Search knowledge file...",
+      search_knowledge: "Search the knowledge base...",
+      no_knowledge_results: "No results",
       select_file_hint: "Select a file from the list to view documentation",
       view_formatted: "Formatted View",
       view_raw: "Raw Text",

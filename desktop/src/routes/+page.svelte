@@ -2066,10 +2066,11 @@
         fileName: selectedFileName,
       });
       await tick();
+      // Always start at the top: a section that cannot be located (e.g. the
+      // file's preamble) must not leave the previous file's scroll position.
+      if (contentContainerRef) contentContainerRef.scrollTop = 0;
       if (targetAnchor) {
         setTimeout(() => scrollToAnchor(targetAnchor), 80);
-      } else if (contentContainerRef) {
-        contentContainerRef.scrollTop = 0;
       }
     } catch (e) {
       selectedFileContent = t("file_load_error", { error: e });
@@ -2244,9 +2245,12 @@
       return;
     }
     try {
-      knowledgeMatches = await invoke("search_knowledge_files", { query });
+      // Full-text over the embedded BM25 index (file-name matches come first).
+      const hits = await invoke("search_knowledge_text", { query });
+      if (searchQuery.trim() !== query) return; // a newer keystroke won
+      knowledgeMatches = hits;
     } catch (e) {
-      console.error("search_knowledge_files failed:", e);
+      console.error("search_knowledge_text failed:", e);
       // Fall back to a case-insensitive match on the file names.
       const lowered = query.toLowerCase();
       knowledgeMatches = knowledgeFiles.filter((f) =>
@@ -3175,7 +3179,8 @@
       {rtl}
       onClose={closeKnowledgeModal}
       onSearchInput={scheduleKnowledgeSearch}
-      onOpenFile={(/** @type {string} */ name) => openKnowledgeFile(name)}
+      onOpenFile={(/** @type {string} */ name, /** @type {string | null} */ heading) =>
+        openKnowledgeFile(name, heading)}
       onCopy={copySelectedContent}
       onContentClick={handleContentClick}
       onContentElement={(/** @type {HTMLElement | null} */ el) => (contentContainerRef = el)}

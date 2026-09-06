@@ -102,14 +102,44 @@ export function preprocessMarkdown(content) {
 }
 
 /**
- * Render a knowledge file: markdown → sanitized HTML.
+ * Wrap every code block in a container with a copy button. The markup is ours
+ * and is added after sanitizing; the click is handled by `handleCopyPreClick`.
+ * @param {Document} doc
+ * @param {Element} root
+ */
+function addCopyButtons(doc, root) {
+  for (const pre of Array.from(root.querySelectorAll("pre"))) {
+    const wrap = doc.createElement("div");
+    wrap.className = "md-pre-wrap";
+    pre.replaceWith(wrap);
+    wrap.append(pre);
+    const btn = doc.createElement("button");
+    btn.setAttribute("type", "button");
+    btn.setAttribute("data-copy-pre", "");
+    btn.className = "md-copy-btn";
+    btn.textContent = t("copy_code");
+    wrap.append(btn);
+  }
+}
+
+/**
+ * Render a knowledge file: markdown → sanitized HTML, plus a copy button on
+ * every code block.
  * @param {string | null} content
  * @returns {string}
  */
 export function renderKnowledgeMarkdown(content) {
   if (!content) return "";
   try {
-    return sanitizeHtml(/** @type {string} */ (marked.parse(preprocessMarkdown(content))));
+    const html = sanitizeHtml(
+      /** @type {string} */ (marked.parse(preprocessMarkdown(content)))
+    );
+    if (typeof DOMParser === "undefined") return html;
+    const doc = new DOMParser().parseFromString(`<div>${html}</div>`, "text/html");
+    const root = doc.body.firstElementChild;
+    if (!root) return html;
+    addCopyButtons(doc, root);
+    return root.innerHTML;
   } catch (e) {
     console.error("Markdown parse error:", e);
     return escapeHtml(content);
@@ -160,19 +190,8 @@ function enhanceAgentHtml(html) {
     node.replaceWith(frag);
   }
 
-  // 2. copy button per code block (the markup is ours, added after sanitizing).
-  for (const pre of Array.from(root.querySelectorAll("pre"))) {
-    const wrap = doc.createElement("div");
-    wrap.className = "md-pre-wrap";
-    pre.replaceWith(wrap);
-    wrap.append(pre);
-    const btn = doc.createElement("button");
-    btn.setAttribute("type", "button");
-    btn.setAttribute("data-copy-pre", "");
-    btn.className = "md-copy-btn";
-    btn.textContent = t("copy_code");
-    wrap.append(btn);
-  }
+  // 2. copy button per code block.
+  addCopyButtons(doc, root);
 
   return root.innerHTML;
 }
@@ -196,7 +215,7 @@ export function renderAgentMarkdown(text) {
 }
 
 /**
- * Copy-button delegation for the code blocks injected by `enhanceAgentHtml`.
+ * Copy-button delegation for the code blocks injected by `addCopyButtons`.
  * @param {MouseEvent} e
  */
 export async function handleCopyPreClick(e) {
