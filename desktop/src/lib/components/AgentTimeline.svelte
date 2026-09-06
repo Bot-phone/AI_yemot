@@ -4,6 +4,7 @@
    * piece of state lives in +page.svelte and arrives here as a prop.
    */
   import { t } from "$lib/i18n.svelte.js";
+  import TruncatedText from "./TruncatedText.svelte";
   import { ltrify, renderAgentMarkdown, handleCopyPreClick } from "$lib/markdown.js";
 
   let {
@@ -180,7 +181,7 @@
     <div class="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl p-3 space-y-2">
       <div class="font-bold">⚠️ {t("agent_error_title")}</div>
       <div class="text-xs">
-        {error.code === "session_expired" ? t("agent_session_expired") : error.message}
+        <TruncatedText text={error.code === "session_expired" ? t("agent_session_expired") : String(error.message ?? "")} />
       </div>
       {#if canRetry && !busy}
         <button

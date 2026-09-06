@@ -16,6 +16,7 @@
   import ChangeLog from "$lib/components/ChangeLog.svelte";
   import TaskHistory from "$lib/components/TaskHistory.svelte";
   import PresetBar from "$lib/components/PresetBar.svelte";
+  import TruncatedText from "$lib/components/TruncatedText.svelte";
   import SettingsPanel from "$lib/components/SettingsPanel.svelte";
   import {
     AUDIO_EXTENSIONS,
@@ -1912,15 +1913,16 @@
         }
         statusMessage = t("request_success");
       } else {
+        statusMessage = "";
         errorMessage = res.message || t("request_failed");
       }
     } catch (e) {
+      statusMessage = "";
       const msg = String(e);
       if (msg.startsWith(SCRIPT_DISABLED_PREFIX)) {
         // The agreed kill-switch signal from the script: a dedicated notice,
         // not a generic communication error.
         const reason = msg.slice(SCRIPT_DISABLED_PREFIX.length).trim();
-        statusMessage = "";
         errorMessage = reason
           ? t("script_disabled_reason", { reason })
           : t("script_disabled");
@@ -2835,7 +2837,7 @@
             {#if errorMessage}
               <div class="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl flex items-center gap-2 flex-wrap">
                 <span>⚠️</span>
-                <span class="flex-1 min-w-0">{errorMessage}</span>
+                <span class="flex-1 min-w-0"><TruncatedText text={errorMessage} /></span>
                 {#if lastRunPrompt && !isLoading}
                   <button
                     type="button"
