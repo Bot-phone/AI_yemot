@@ -761,6 +761,17 @@ const CANCELLED_AUDIO_MSG: &str = "הריצה בוטלה, הרץ שוב לפני
 /// The upload was proposed for an extension that still does not exist.
 const AUDIO_FOLDER_MISSING_MSG: &str = "השלוחה עדיין לא קיימת — אשר קודם את יצירת השלוחה ואז את ההעלאה";
 
+/// Apply order: every `ext.ini` / text write first, audio uploads last, each
+/// group in proposal order. An upload into an extension the same task creates
+/// can then never run before the write that creates it, whatever order the
+/// model proposed them in. Stable, so nothing else moves.
+fn order_for_apply(actions: Vec<ProposedAction>) -> Vec<ProposedAction> {
+    let (audio, rest): (Vec<ProposedAction>, Vec<ProposedAction>) = actions
+        .into_iter()
+        .partition(|a| a.kind == "upload_audio_file");
+    rest.into_iter().chain(audio).collect()
+}
+
 /// Split off the `upload_audio_file` actions of a cancelled run.
 ///
 /// A cancelled run stays approvable on purpose — the user may still want the
@@ -1015,8 +1026,9 @@ pub async fn approve_actions(
             .ok_or_else(|| "הריצה כבר אינה זמינה — הרץ שוב".to_string())?;
         let all = handle.proposed.lock().await.clone();
         let wanted: HashSet<&String> = action_ids.iter().collect();
-        let picked: Vec<ProposedAction> =
-            all.into_iter().filter(|a| wanted.contains(&a.id)).collect();
+        let picked = order_for_apply(
+            all.into_iter().filter(|a| wanted.contains(&a.id)).collect(),
+        );
         // The attachment behind each audio action, as the tool resolved it from
         // the run's own list. Nothing the model wrote reaches the filesystem.
         let audio = handle.audio.lock().await.clone();
@@ -2881,6 +2893,34 @@ mod tests {
 
     /// A cancelled run stays approvable — except for the one kind that cannot
     /// be undone.
+    #[test]
+    fn audio_uploads_are_applied_after_every_write_whatever_the_proposal_order() {
+        let mk = |id: &str, kind: &str| ProposedAction {
+            id: id.into(),
+            tool_use_id: format!("toolu_{id}"),
+            kind: kind.into(),
+            path: "/10".into(),
+            canon_path: "ivr2:/10".into(),
+            params: Vec::new(),
+            contents: None,
+            reason: String::new(),
+            risk: "low".into(),
+            exists: false,
+            diff: Vec::new(),
+            warnings: Vec::new(),
+            previous: None,
+            snapshot_hash: None,
+        };
+        let ordered = order_for_apply(vec![
+            mk("a_1", "upload_audio_file"),
+            mk("a_2", "set_extension_params"),
+            mk("a_3", "upload_audio_file"),
+            mk("a_4", "upload_text_file"),
+        ]);
+        let ids: Vec<&str> = ordered.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(ids, ["a_2", "a_4", "a_1", "a_3"]);
+    }
+
     #[test]
     fn a_cancelled_run_refuses_audio_uploads_only() {
         let mut audio = action("a_2");

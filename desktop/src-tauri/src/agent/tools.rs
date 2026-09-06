@@ -852,9 +852,9 @@ async fn upload_audio_file(ctx: &ToolCtx, input: &Value, tool_use_id: &str) -> T
     // unknown answer would show the user a "new file" for what may be an
     // irreversible overwrite.
     // A folder that does not exist yet is not "unknown": the task usually
-    // creates the extension in the same run (its `ext.ini` write is proposed
-    // first and applied first), so the upload is proposed as a new file with a
-    // warning, and the apply re-checks that the extension exists by then.
+    // creates the extension in the same run. `order_for_apply` in the runner
+    // applies every write before any upload, so the upload is proposed as a new
+    // file with a warning, and the apply re-checks that the extension exists.
     let mut folder_missing = false;
     let existing = match ctx.client.list_files(&dir).await {
         Ok(files) => files
