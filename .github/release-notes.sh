@@ -13,8 +13,10 @@ echo "---"
 echo
 echo "## מה חדש בגרסה ${version}"
 echo
+# Portable (BSD awk on macOS runners too): print the section, dropping the
+# blank line that follows the heading.
 awk -v v="$version" '
-  $0 == "## " v { on = 1; next }
+  $0 == "## " v { on = 1; first = 1; next }
   on && /^## /   { exit }
-  on             { print }
-' "$root/CHANGELOG.md" | sed -e '1{/^$/d}'
+  on             { if (first && $0 == "") { first = 0; next } first = 0; print }
+' "$root/CHANGELOG.md"
