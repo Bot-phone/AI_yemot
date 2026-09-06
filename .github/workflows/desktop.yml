@@ -145,8 +145,9 @@ jobs:
         working-directory: desktop
         run: npm ci
 
-      # Release body: the version's CHANGELOG section plus the Hebrew usage
-      # guide (desktop/RELEASE_GUIDE.md), composed by .github/release-notes.sh.
+      # Release body: download links for every installer, then the Hebrew usage
+      # guide (desktop/RELEASE_GUIDE.md) and the version's CHANGELOG section,
+      # composed by .github/release-notes.sh.
       - name: Release notes
         id: notes
         shell: bash
