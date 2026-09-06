@@ -103,7 +103,7 @@ pub fn render_error(err: &YemotError) -> String {
     }
 }
 
-fn is_missing_file(err: &YemotError) -> bool {
+pub fn is_missing_file(err: &YemotError) -> bool {
     let msg = match err {
         YemotError::Api { message, .. } => message.to_lowercase(),
         YemotError::BadRequest(m) => m.to_lowercase(),

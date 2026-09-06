@@ -758,6 +758,8 @@ const UNDO_STALE_MSG: &str = "הקובץ השתנה מאז הביצוע, לא נ
 /// The destination was free when the upload was proposed and is not any more.
 const AUDIO_APPEARED_MSG: &str = "הקובץ נוצר בשרת מאז ההצעה, הרץ שוב";
 const CANCELLED_AUDIO_MSG: &str = "הריצה בוטלה, הרץ שוב לפני העלאת שמע";
+/// The upload was proposed for an extension that still does not exist.
+const AUDIO_FOLDER_MISSING_MSG: &str = "השלוחה עדיין לא קיימת — אשר קודם את יצירת השלוחה ואז את ההעלאה";
 
 /// Split off the `upload_audio_file` actions of a cancelled run.
 ///
@@ -1426,6 +1428,14 @@ async fn apply_actions(
                             out.push(refusal(a, AUDIO_APPEARED_MSG));
                             continue;
                         }
+                    }
+                    Err(e) if yemot::is_missing_file(&e) => {
+                        // Proposed for an extension the same task creates; the
+                        // creation was not applied (or failed), so the upload
+                        // has nowhere to go.
+                        refused.push(a.id.clone());
+                        out.push(refusal(a, AUDIO_FOLDER_MISSING_MSG));
+                        continue;
                     }
                     Err(_) => {
                         refused.push(a.id.clone());

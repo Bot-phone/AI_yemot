@@ -5,6 +5,14 @@ All notable changes to AI yemot. Versions follow the crate version in
 
 ## 0.1.0
 
+### Updates
+
+- Signed in-app updates: the app checks GitHub Releases on start, and one click
+  downloads and installs the new version after verifying its minisign
+  signature against the public key built into the app. Release builds are
+  signed in CI and publish `latest.json` next to the installers.
+
+
 The first release of AI yemot as a **desktop editor for Yemot HaMashiach phone
 lines**. The browser client that posted the Yemot token to a Google Apps Script
 is gone; the Apps Script bot is frozen legacy, and `index.html` is now only a

@@ -21,6 +21,10 @@ export const LOCALES = {
       footer_credit: "נוצר ע״י בוט פון — מערכות טלפוניות חכמות",
       knowledge_btn: "📚 בסיס ידע מקומי",
       update_available: "🚀 עדכון זמין: v{version}",
+      update_install: "🚀 עדכון זמין: v{version} — הורד והתקן",
+      update_downloading: "⬇️ מוריד עדכון… {percent}%",
+      update_restart: "✅ העדכון הותקן — הפעל מחדש",
+      update_failed: "העדכון נכשל — הורד ידנית v{version}",
 
       target_mode: "מקור ה-AI",
       mode_direct_hint: "האפליקציה פונה ישירות לספק ה-AI עם המפתח שלך. עורך הקו המלא (מבנה הקו, המשך משימה, קבצים מצורפים, היסטוריה) עובד במצב זה.",
@@ -374,6 +378,10 @@ export const LOCALES = {
       footer_credit: "Created by Bot Phone — Smart phone systems",
       knowledge_btn: "📚 Local knowledge base",
       update_available: "🚀 Update available: v{version}",
+      update_install: "🚀 Update available: v{version} — download and install",
+      update_downloading: "⬇️ Downloading update… {percent}%",
+      update_restart: "✅ Update installed — restart",
+      update_failed: "Update failed — download v{version} manually",
 
       target_mode: "AI source",
       mode_direct_hint: "The app calls the AI provider directly with your key. The full line editor (line structure, task continuation, attachments, history) works in this mode.",

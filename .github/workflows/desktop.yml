@@ -160,7 +160,13 @@ jobs:
       - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater signing: every bundle gets a minisign signature and the
+          # action publishes latest.json, which the app's updater plugin reads.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: true
           projectPath: desktop
           tagName: v__VERSION__
           releaseName: 'AI yemot v__VERSION__'

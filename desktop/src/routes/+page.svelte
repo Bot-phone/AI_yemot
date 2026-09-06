@@ -4,6 +4,8 @@
   import { listen } from "@tauri-apps/api/event";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+  import { check as checkUpdate } from "@tauri-apps/plugin-updater";
+  import { relaunch } from "@tauri-apps/plugin-process";
   import { t, i18n, isRTL, setLocale, availableLocales } from "$lib/i18n.svelte.js";
   import AgentTimeline from "$lib/components/AgentTimeline.svelte";
   import ActionApprovalList from "$lib/components/ActionApprovalList.svelte";
@@ -174,6 +176,53 @@
   // GitHub Update info
   /** @type {any} */
   let updateInfo = $state(null);
+  /** "idle" | "downloading" | "ready" | "failed" — the in-app install flow. */
+  let updateState = $state("idle");
+  let updateProgress = $state(0);
+  let updateError = $state("");
+
+  /**
+   * Download and install the signed update through the Tauri updater plugin.
+   * The plugin verifies the minisign signature against the public key in
+   * tauri.conf.json before anything is written; a failed verification ends in
+   * `failed`, never in a half-installed app. On Windows the installer runs in
+   * passive mode and quits the app itself, so `ready` may never be reached.
+   */
+  async function installUpdate() {
+    if (updateState === "downloading") return;
+    if (updateState === "ready") {
+      await relaunch();
+      return;
+    }
+    updateState = "downloading";
+    updateProgress = 0;
+    updateError = "";
+    let downloaded = 0;
+    let total = 0;
+    try {
+      const update = await checkUpdate();
+      if (!update) {
+        // No signed artifact for this platform: fall back to the release page.
+        updateState = "idle";
+        if (updateInfo?.release_url) await openUrl(updateInfo.release_url);
+        return;
+      }
+      await update.downloadAndInstall((ev) => {
+        if (ev.event === "Started") {
+          total = ev.data.contentLength ?? 0;
+        } else if (ev.event === "Progress") {
+          downloaded += ev.data.chunkLength;
+          updateProgress = total > 0 ? Math.min(99, Math.round((downloaded * 100) / total)) : 0;
+        } else if (ev.event === "Finished") {
+          updateProgress = 100;
+        }
+      });
+      updateState = "ready";
+    } catch (e) {
+      updateState = "failed";
+      updateError = errorText(e);
+    }
+  }
 
   // ----- Approval-panel UX state -----
   /** Inline message shown inside the approval card (replaces alert()). */
@@ -2562,13 +2611,31 @@
         </button>
 
         {#if updateInfo && updateInfo.has_update}
-          <button
-            type="button"
-            onclick={() => openUrl(updateInfo.release_url)}
-            class="px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-300 text-xs font-semibold text-emerald-700 flex items-center gap-1 animate-pulse"
-          >
-            <span>{t("update_available", { version: updateInfo.latest_version })}</span>
-          </button>
+          {#if updateState === "failed"}
+            <button
+              type="button"
+              onclick={() => openUrl(updateInfo.release_url)}
+              title={updateError}
+              class="px-3 py-1.5 rounded-lg bg-rose-50 border border-rose-300 text-xs font-semibold text-rose-700 flex items-center gap-1"
+            >
+              <span>{t("update_failed", { version: updateInfo.latest_version })}</span>
+            </button>
+          {:else}
+            <button
+              type="button"
+              onclick={installUpdate}
+              disabled={updateState === "downloading"}
+              class="px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-300 text-xs font-semibold text-emerald-700 flex items-center gap-1 disabled:opacity-80 {updateState === 'idle' ? 'animate-pulse' : ''}"
+            >
+              {#if updateState === "downloading"}
+                <span>{t("update_downloading", { percent: updateProgress })}</span>
+              {:else if updateState === "ready"}
+                <span>{t("update_restart")}</span>
+              {:else}
+                <span>{t("update_install", { version: updateInfo.latest_version })}</span>
+              {/if}
+            </button>
+          {/if}
         {/if}
 
         <button

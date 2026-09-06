@@ -851,11 +851,20 @@ async fn upload_audio_file(ctx: &ToolCtx, input: &Value, tool_use_id: &str) -> T
     // Does the destination already hold a file of that name? Fails closed: an
     // unknown answer would show the user a "new file" for what may be an
     // irreversible overwrite.
+    // A folder that does not exist yet is not "unknown": the task usually
+    // creates the extension in the same run (its `ext.ini` write is proposed
+    // first and applied first), so the upload is proposed as a new file with a
+    // warning, and the apply re-checks that the extension exists by then.
+    let mut folder_missing = false;
     let existing = match ctx.client.list_files(&dir).await {
         Ok(files) => files
             .into_iter()
             .find(|f| f.name.eq_ignore_ascii_case(&name))
             .map(|f| f.name),
+        Err(e) if yemot::is_missing_file(&e) => {
+            folder_missing = true;
+            None
+        }
         Err(e) => {
             ctx.note_yemot_error(&e).await;
             return ToolOutcome::err(format!(
@@ -865,7 +874,7 @@ async fn upload_audio_file(ctx: &ToolCtx, input: &Value, tool_use_id: &str) -> T
             ));
         }
     };
-    let action = audio_action(
+    let mut action = audio_action(
         &ctx.next_action_id().await,
         tool_use_id,
         &canon,
@@ -873,6 +882,12 @@ async fn upload_audio_file(ctx: &ToolCtx, input: &Value, tool_use_id: &str) -> T
         existing,
         &s(input, "reason"),
     );
+    if folder_missing {
+        action.warnings.push(format!(
+            "השלוחה {} עדיין לא קיימת — ההעלאה תתבצע רק אחרי שיצירת השלוחה תאושר ותבוצע",
+            yemot::display_path(&dir)
+        ));
+    }
 
     // The bytes stay on disk until the approval; only the mapping is kept.
     ctx.audio.lock().await.insert(action.id.clone(), att);

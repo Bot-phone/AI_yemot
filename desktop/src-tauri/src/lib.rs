@@ -14,6 +14,10 @@ pub fn run() {
         // Native file picker for audio attachments. The UI only learns local
         // paths from it; Rust validates them before anything is uploaded.
         .plugin(tauri_plugin_dialog::init())
+        // Signed in-app updates from GitHub Releases (`latest.json` + minisign
+        // signatures produced by desktop.yml). `process` is only for relaunch.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(agent::AgentRegistry::default())
         .invoke_handler(tauri::generate_handler![
             knowledge::get_knowledge_files,
