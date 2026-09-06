@@ -153,3 +153,29 @@ mod tests {
         assert!(!is_newer_version("not-a-version", "1.0.0"));
     }
 }
+
+#[cfg(test)]
+mod live_tests {
+    //! Network test, run by hand: `cargo test --lib live_release -- --ignored --nocapture`.
+    use super::*;
+
+    #[tokio::test]
+    #[ignore]
+    async fn live_release_offers_an_update_to_an_older_build() {
+        let json: serde_json::Value = client()
+            .unwrap()
+            .get(RELEASES_LATEST_URL)
+            .send()
+            .await
+            .expect("GitHub reachable")
+            .json()
+            .await
+            .expect("release JSON");
+        let tag = json["tag_name"].as_str().unwrap_or("").trim_start_matches('v');
+        assert!(!tag.is_empty(), "no release published");
+        assert!(is_newer_version(tag, "0.0.1"), "{tag} should be offered to 0.0.1");
+        assert!(!is_newer_version(tag, env!("CARGO_PKG_VERSION")), "current build is up to date");
+        assert!(json["html_url"].as_str().unwrap_or("").starts_with("https://github.com/Bot-phone/AI_yemot/releases/"));
+        println!("latest release tag = v{tag}");
+    }
+}
