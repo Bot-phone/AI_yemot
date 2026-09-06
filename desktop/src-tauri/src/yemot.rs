@@ -616,6 +616,12 @@ fn children_from_dir(parent_canon: &str, json: &Value) -> Vec<ExtNode> {
 
 /// Files of a `GetIVR2Dir` reply. `files` holds audio/other files; ini, system
 /// messages and reports live in their own arrays, so all four are collected.
+///
+/// The `messages` array lists every system message the folder *could*
+/// override (`M0000.wav` … with `exists: false`), not only the ones that were
+/// actually recorded there. An entry that explicitly says it does not exist is
+/// skipped; entries without the field (the `files` / `ini` buckets do not
+/// always carry it) are kept.
 fn files_from_dir(json: &Value) -> Vec<FileEntry> {
     let mut out: Vec<FileEntry> = Vec::new();
     for bucket in ["files", "ini", "messages", "html"] {
@@ -626,6 +632,9 @@ fn files_from_dir(json: &Value) -> Vec<FileEntry> {
             let Some(name) = f.get("name").and_then(|v| v.as_str()) else {
                 continue;
             };
+            if f.get("exists").and_then(|v| v.as_bool()) == Some(false) {
+                continue;
+            }
             if name.is_empty() || out.iter().any(|e| e.name == name) {
                 continue;
             }
@@ -2070,12 +2079,18 @@ mod tests {
             "dirs": [{"name": "1"}],
             "files": [{"name": "000.wav", "size": 12, "mtime": "01/01/2026 10:00"}],
             "ini": [{"name": "ext.ini", "size": 40}],
-            "messages": [{"name": "M0000.wav"}],
+            "messages": [
+                {"name": "M0000.wav", "exists": true},
+                {"name": "M1829.wav", "exists": false, "size": null, "mtime": null},
+                {"name": "M1856.wav"}
+            ],
             "html": [{"name": "ext.ini"}]
         });
         let files = files_from_dir(&v);
         let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
-        assert_eq!(names, vec!["000.wav", "M0000.wav", "ext.ini"]);
+        // A system message the folder merely *could* override (`exists: false`)
+        // is not a file of the folder; one without the field is kept.
+        assert_eq!(names, vec!["000.wav", "M0000.wav", "M1856.wav", "ext.ini"]);
         assert_eq!(files[0].size, Some(12));
         assert_eq!(files[1].mtime, None);
         assert!(files_from_dir(&json!({"dirs": []})).is_empty());
