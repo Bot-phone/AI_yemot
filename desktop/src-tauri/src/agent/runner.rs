@@ -2153,8 +2153,20 @@ async fn call_with_retry(
                 };
                 let wait = backoff_ms(attempt, retry_after);
                 if !budget_allows_retry(started_at.elapsed(), wait) {
+                    eprintln!(
+                        "agent: giving up after {} attempt(s), run budget exhausted — {}",
+                        attempt,
+                        e.message()
+                    );
                     return Err(e);
                 }
+                eprintln!(
+                    "agent: retry {}/{} in {}ms — {}",
+                    attempt,
+                    MAX_ATTEMPTS,
+                    wait,
+                    e.message()
+                );
                 events::retry(
                     &ctx.app,
                     &ctx.run_id,

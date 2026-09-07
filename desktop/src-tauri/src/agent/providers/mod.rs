@@ -326,7 +326,23 @@ pub(crate) fn classify_status(status: u16, retry_after: Option<u64>, body: &str)
 /// a provider URL may carry credentials in its query string, and this string
 /// ends up in the UI and in logs.
 pub(crate) fn classify_reqwest(e: reqwest::Error) -> ProviderError {
-    ProviderError::Transient(e.without_url().to_string())
+    // without_url first: the URL can carry credentials (a custom provider's
+    // `?key=`) and both the log line and the UI message come from this error.
+    let clean = e.without_url();
+    log_transport_chain(&clean);
+    ProviderError::Transient(clean.to_string())
+}
+
+/// The reqwest top-level message ("error sending request") hides the real
+/// cause; the source chain names it — DNS, refused connection, timeout, TLS.
+fn log_transport_chain(e: &reqwest::Error) {
+    let mut chain: Vec<String> = vec![e.to_string()];
+    let mut source = std::error::Error::source(e);
+    while let Some(s) = source {
+        chain.push(s.to_string());
+        source = s.source();
+    }
+    eprintln!("agent: transport error: {}", chain.join(" <- "));
 }
 
 /// The provider's own error message, trimmed to something loggable.

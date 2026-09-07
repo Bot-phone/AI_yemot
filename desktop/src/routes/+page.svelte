@@ -1354,6 +1354,9 @@
       listen("agent:retry", (event) => {
         const p = /** @type {any} */ (event.payload);
         if (!isCurrentRun(p)) return;
+        console.warn(
+          `[ai-yemot] retry ${p.attempt}/${p.max} in ${p.wait_ms}ms — ${p.reason}`
+        );
         agentRetryNotice = {
           attempt: p.attempt ?? 1,
           max: p.max ?? 1,
@@ -1396,6 +1399,7 @@
       listen("agent:error", (event) => {
         const p = /** @type {any} */ (event.payload);
         if (!isCurrentRun(p)) return;
+        console.error(`[ai-yemot] run error (${p.code}): ${p.message}`);
         agentRunning = false;
         agentCancelling = false;
         isLoading = false;
